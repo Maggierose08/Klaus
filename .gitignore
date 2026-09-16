@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime-generated state, not source
+trading/journal.json
+trading/summaries/
+claus_restart.txt
+orb_restart.txt
+orb_level.txt
+orb_status.txt
+
+# Local env/secrets, if any ever show up here
+.env
+.env.*
+*.pem
+*.key
+
+# Per-user local Claude Code settings (permissions etc.), not shared project config
+.claude/settings.local.json

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json\n$fp = $j.tool_input.file_path\nif ($fp -ieq 'C:\\Users\\gusbu\\claus\\claus.py') { Set-Content -Path 'C:\\Users\\gusbu\\claus\\claus_restart.txt' -Value '1' -NoNewline }\nif ($fp -ieq 'C:\\Users\\gusbu\\claus\\orb.py') { Set-Content -Path 'C:\\Users\\gusbu\\claus\\orb_restart.txt' -Value '1' -NoNewline }\nif ($fp -ilike 'C:\\Users\\gusbu\\claus\\trading\\*.py') { Set-Content -Path 'C:\\Users\\gusbu\\claus\\claus_restart.txt' -Value '1' -NoNewline }"
+          }
+        ]
+      }
+    ]
+  }
+}
