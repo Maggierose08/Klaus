@@ -7,7 +7,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+# Pinned, not @latest: codemode_job.py's --permission-prompts none flag
+# needs a version that supports it. Floating on @latest broke this in
+# practice (the resolved build-time version didn't recognize the flag and
+# the CLI call failed outright) - bump this deliberately, re-testing the
+# flags in codemode_job.py still work, rather than drifting silently.
+RUN npm install -g @anthropic-ai/claude-code@2.1.278
 
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
