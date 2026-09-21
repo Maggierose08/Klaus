@@ -91,6 +91,35 @@ gcloud builds submit --config=cloudbuild.job.yaml --substitutions=_TAG=$REGION-d
 
 ## 2. Cloud Run Service (web Q&A app)
 
+**After the one-time setup below, `trading-web` auto-deploys on every push to
+`main`** via a Cloud Build trigger (`cloudbuild.yaml` at the repo root:
+builds the web image, pushes it tagged with the commit SHA, then `gcloud run
+deploy`s it). The manual commands in this section are for the first deploy,
+or for `trading-pipeline`/`trading-daily-summary`, which aren't wired to the
+trigger. One-time trigger setup (already done for this project; recorded
+here for a future project):
+
+```sh
+gcloud builds connections create github klaus-github --region=$REGION
+# Follow the printed link to authorize Cloud Build against GitHub, then:
+gcloud builds repositories create klaus \
+  --remote-uri="https://github.com/YOUR_GH_USER/YOUR_REPO.git" \
+  --connection=klaus-github --region=$REGION
+
+for role in roles/run.admin roles/iam.serviceAccountUser roles/artifactregistry.writer; do
+  gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+    --member=serviceAccount:$PROJECT_NUMBER@cloudbuild.gserviceaccount.com \
+    --role=$role --condition=None
+done
+
+gcloud builds triggers create github \
+  --name=trading-web-deploy \
+  --repository=projects/YOUR_PROJECT_ID/locations/$REGION/connections/klaus-github/repositories/klaus \
+  --branch-pattern="^main$" \
+  --build-config=cloudbuild.yaml \
+  --region=$REGION
+```
+
 ```sh
 gcloud run deploy trading-web \
   --image $REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/web \
