@@ -1,0 +1,20 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+# git: the job clones/branches/pushes with plain git commands (codemode_job.py).
+# python3/pip: the job's own entrypoint is Python, reusing trading/storage.py etc.
+RUN apt-get update && apt-get install -y --no-install-recommends git python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @anthropic-ai/claude-code
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+
+COPY trading/ trading/
+
+# Isolated from the always-on trading-web service on purpose - this is the
+# only image with the agentic (Bash-capable) Claude Code CLI in it. See
+# trading/codemode.py and trading/DEPLOY.md.
+CMD ["python3", "-m", "trading.codemode_job"]

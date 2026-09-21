@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, render_template_string, request
 
+from . import codemode
 from . import config
 from . import data_client
 from . import journal
@@ -40,9 +41,11 @@ SYSTEM_PROMPT = (
 )
 
 # Klaus's general-purpose personality, adapted from claus.py's SYSTEM_PROMPT
-# for a text/web context: no "keep it short, this gets read aloud" limit,
-# and no code-mode trigger (this deployment can't run Claude Code or restart
-# the local voice assistant, so offering that here would be a dead end).
+# for a text/web context: no "keep it short, this gets read aloud" limit.
+# No code-mode trigger baked into the chat personality either - code mode
+# lives in its own explicit card below (see codemode.py), not something
+# /chat offers to slide into mid-conversation the way claus.py's voice
+# version does.
 KLAUS_SYSTEM_PROMPT = (
     "You are Klaus - same guy as always, just typing instead of talking "
     "right now. Blunt, deadpan, sarcastic - you don't sugarcoat anything "
@@ -520,6 +523,58 @@ PAGE = """<!doctype html>
     padding: 0;
   }
   .send-btn { padding: 0 20px; height: 44px; }
+
+  /* Code mode card */
+  .diffbox {
+    max-height: 320px;
+    overflow: auto;
+    background: var(--page-plane);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-top: 12px;
+  }
+  .confirm-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .confirm-row input {
+    flex: 1;
+    min-width: 100px;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .confirm-row button { width: auto; margin-top: 0; padding: 10px 16px; }
+  .codelog { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .codelog-entry {
+    border-top: 1px solid var(--hairline);
+    padding-top: 10px;
+    font-size: 0.85rem;
+  }
+  .codelog-entry:first-child { border-top: none; padding-top: 0; }
+  .codelog-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--ink-muted);
+    font-size: 0.78rem;
+    margin-bottom: 4px;
+  }
+  .codelog-status { font-weight: 600; text-transform: capitalize; }
+  .codelog-status.merged { color: var(--good-text); }
+  .codelog-status.error, .codelog-status.rejected { color: var(--bad-text); }
+  .undo-btn {
+    width: auto;
+    margin-top: 6px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
@@ -570,6 +625,23 @@ PAGE = """<!doctype html>
       </div>
       <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; images &amp; links work too</div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Code mode</h2>
+    <textarea id="codeInstruction" placeholder="e.g. add a docstring to executor.py explaining the retry logic"></textarea>
+    <button id="codeSubmit">Make the change</button>
+    <div class="hint">Klaus edits on a branch and shows you the diff here first. Merging to main needs a code emailed to you, plus typing "run it".</div>
+    <div id="codeStatus" class="answer"></div>
+    <div id="codeDiffWrap" style="display:none">
+      <pre id="codeDiff" class="diffbox"></pre>
+      <div class="confirm-row">
+        <input id="codeCode" placeholder="4-digit code" inputmode="numeric" maxlength="4">
+        <input id="codePhrase" placeholder='type &quot;run it&quot;'>
+        <button id="codeConfirmBtn">Confirm &amp; merge</button>
+      </div>
+    </div>
+    <div id="codeLog" class="codelog"><div class="loading">Loading&hellip;</div></div>
   </div>
 </div>
 <script>
@@ -875,6 +947,164 @@ PAGE = """<!doctype html>
       sendChat();
     }
   });
+
+  // --- Code mode ---
+  const codeInstructionEl = document.getElementById('codeInstruction');
+  const codeSubmitEl = document.getElementById('codeSubmit');
+  const codeStatusEl = document.getElementById('codeStatus');
+  const codeDiffWrapEl = document.getElementById('codeDiffWrap');
+  const codeDiffEl = document.getElementById('codeDiff');
+  const codeCodeEl = document.getElementById('codeCode');
+  const codePhraseEl = document.getElementById('codePhrase');
+  const codeConfirmBtnEl = document.getElementById('codeConfirmBtn');
+  const codeLogEl = document.getElementById('codeLog');
+  let codePollTimer = null;
+  let currentRequestId = null;
+
+  function showCodeStatus(text, isError) {
+    codeStatusEl.style.display = 'block';
+    codeStatusEl.classList.toggle('error', !!isError);
+    codeStatusEl.textContent = text;
+  }
+
+  async function startCodeMode() {
+    const instruction = codeInstructionEl.value.trim();
+    if (!instruction) return;
+    codeSubmitEl.disabled = true;
+    codeDiffWrapEl.style.display = 'none';
+    showCodeStatus('Working on it...', false);
+    try {
+      const res = await fetch('/codemode/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+      currentRequestId = data.request_id;
+      pollCodeStatus();
+    } catch (err) {
+      showCodeStatus(err.message || 'Something went wrong.', true);
+      codeSubmitEl.disabled = false;
+    }
+  }
+
+  function pollCodeStatus() {
+    if (codePollTimer) clearInterval(codePollTimer);
+    codePollTimer = setInterval(async () => {
+      let data, ok;
+      try {
+        const res = await fetch('/codemode/status/' + currentRequestId);
+        data = await res.json();
+        ok = res.ok;
+      } catch (err) {
+        return; // transient network hiccup - keep polling
+      }
+      if (!ok) {
+        clearInterval(codePollTimer);
+        showCodeStatus(data.error || 'That request expired.', true);
+        codeSubmitEl.disabled = false;
+        return;
+      }
+      if (data.status === 'running' || data.status === 'confirming') {
+        showCodeStatus('Working on it...', false);
+      } else if (data.status === 'diff_ready') {
+        clearInterval(codePollTimer);
+        codeSubmitEl.disabled = false;
+        showCodeStatus(data.summary || 'Change ready for review. Check your email for the code.', false);
+        codeDiffEl.textContent = data.diff || '(no diff)';
+        codeDiffWrapEl.style.display = 'block';
+      } else if (data.status === 'no_changes') {
+        clearInterval(codePollTimer);
+        codeSubmitEl.disabled = false;
+        showCodeStatus(data.summary || "Didn't end up changing anything.", false);
+      } else if (data.status === 'error') {
+        clearInterval(codePollTimer);
+        codeSubmitEl.disabled = false;
+        showCodeStatus(data.error_message || 'Something went wrong.', true);
+      }
+    }, 3000);
+  }
+
+  async function confirmCodeMode() {
+    const code = codeCodeEl.value.trim();
+    const phrase = codePhraseEl.value.trim();
+    if (!code || !phrase) return;
+    codeConfirmBtnEl.disabled = true;
+    try {
+      const res = await fetch('/codemode/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: currentRequestId, code, phrase }),
+      });
+      const data = await res.json();
+      showCodeStatus(data.message || (data.ok ? 'Done.' : 'Something went wrong.'), !data.ok);
+      if (data.ok) {
+        codeDiffWrapEl.style.display = 'none';
+        codeInstructionEl.value = '';
+        codeCodeEl.value = '';
+        codePhraseEl.value = '';
+        loadCodeLog();
+      }
+    } catch (err) {
+      showCodeStatus(err.message || 'Something went wrong.', true);
+    } finally {
+      codeConfirmBtnEl.disabled = false;
+    }
+  }
+
+  async function undoLastMerge(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Undoing...';
+    try {
+      const res = await fetch('/codemode/undo', { method: 'POST' });
+      const data = await res.json();
+      alert(data.message || (data.ok ? 'Reverted.' : 'Could not undo.'));
+      loadCodeLog();
+    } catch (err) {
+      alert('Could not undo.');
+      btn.disabled = false;
+      btn.textContent = 'Undo';
+    }
+  }
+
+  async function loadCodeLog() {
+    try {
+      const res = await fetch('/codemode/log');
+      const data = await res.json();
+      const entries = data.entries || [];
+      if (!entries.length) {
+        codeLogEl.innerHTML = '<div class="empty">No code-mode changes yet.</div>';
+        return;
+      }
+      let undoShown = false;
+      codeLogEl.innerHTML = entries.map(e => {
+        const isRecentMerge = !undoShown && e.status === 'merged' && !e.undone_at;
+        const withinWindow = isRecentMerge &&
+          (Date.now() - new Date(e.confirmed_at).getTime()) < 24 * 3600 * 1000;
+        if (isRecentMerge) undoShown = true; // only the single most recent merge is ever eligible
+        const undoBtn = withinWindow ? '<button type="button" class="undo-btn">Undo</button>' : '';
+        const undoneNote = e.undone_at ? ' (undone)' : '';
+        const files = (e.files_changed || []).join(', ');
+        return (
+          '<div class="codelog-entry">' +
+            '<div class="codelog-meta"><span>' + fmtTime(e.confirmed_at || e.requested_at) + '</span>' +
+              '<span class="codelog-status ' + e.status + '">' + e.status + undoneNote + '</span></div>' +
+            '<div>' + (e.instruction || '') + '</div>' +
+            (files ? '<div class="hint">' + files + '</div>' : '') +
+            undoBtn +
+          '</div>'
+        );
+      }).join('');
+      codeLogEl.querySelectorAll('.undo-btn').forEach(btn => btn.addEventListener('click', () => undoLastMerge(btn)));
+    } catch (err) {
+      codeLogEl.innerHTML = '<div class="empty">Could not load the log.</div>';
+    }
+  }
+
+  codeSubmitEl.addEventListener('click', startCodeMode);
+  codeConfirmBtnEl.addEventListener('click', confirmCodeMode);
+  loadCodeLog();
 </script>
 </body>
 </html>
@@ -1049,6 +1279,56 @@ def chat():
 
     answer = "".join(b.text for b in response.content if b.type == "text")
     return jsonify({"answer": answer, "fetched": fetched})
+
+
+@app.route("/codemode/request", methods=["POST"])
+def codemode_request():
+    body = request.get_json(silent=True) or {}
+    instruction = (body.get("instruction") or "").strip()
+    if not instruction:
+        return jsonify({"error": "Tell Klaus what to change first."}), 400
+
+    try:
+        request_id, branch = codemode.start_request(instruction)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 409
+    except Exception as e:
+        return jsonify({"error": f"Couldn't start that: {e}"}), 502
+
+    return jsonify({"request_id": request_id, "branch": branch})
+
+
+@app.route("/codemode/status/<request_id>")
+def codemode_status(request_id):
+    pending = codemode.get_status(request_id)
+    if pending is None:
+        return jsonify({"error": "That request isn't pending anymore (it may have expired)."}), 404
+    return jsonify(codemode.public_view(pending))
+
+
+@app.route("/codemode/confirm", methods=["POST"])
+def codemode_confirm():
+    body = request.get_json(silent=True) or {}
+    request_id = (body.get("request_id") or "").strip()
+    code = (body.get("code") or "").strip()
+    phrase = body.get("phrase") or ""
+    if not request_id:
+        return jsonify({"error": "Missing request id."}), 400
+
+    ok, message, _entry = codemode.confirm_request(request_id, code, phrase)
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
+
+
+@app.route("/codemode/log")
+def codemode_log():
+    entries = codemode.read_log()
+    return jsonify({"entries": list(reversed(entries))[:50]})
+
+
+@app.route("/codemode/undo", methods=["POST"])
+def codemode_undo():
+    ok, message, _entry = codemode.undo_last_merge()
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
 
 
 if __name__ == "__main__":

@@ -221,6 +221,79 @@ Then open the `trading-web` URL (`gcloud run services describe trading-web
 --region $REGION --format='value(status.url)'`) on your phone and ask it
 something.
 
+## 6. Code mode (Klaus editing this repo from the web page)
+
+Adds a third deployable: **`trading-codemode`**, a Cloud Run Job built from
+`Dockerfile.codemode` that runs the actual Claude Code CLI (Node + git,
+`--permission-mode acceptEdits`, same `--allowedTools`/`--disallowedTools`
+allowlist as `claus.py`'s local `run_claude_code`). It's kept isolated from
+`trading-web` on purpose — `trading-web` itself only runs plain, fixed-
+argument `git` commands (merge/revert/push), never the agentic CLI. See
+`trading/codemode.py` and `trading/codemode_job.py`.
+
+**New secret** — a GitHub PAT scoped to just this repo (fine-grained token,
+Contents: Read and write, no other permissions):
+
+```sh
+echo -n "PASTE_YOUR_GITHUB_TOKEN" | gcloud secrets create GITHUB_TOKEN --data-file=-
+gcloud secrets add-iam-policy-binding GITHUB_TOKEN \
+  --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor
+```
+
+**Build and deploy the job:**
+
+```sh
+gcloud builds submit --config=cloudbuild.codemode.yaml \
+  --substitutions=_TAG=$REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/codemode .
+
+gcloud run jobs create trading-codemode \
+  --image $REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/codemode \
+  --region $REGION \
+  --memory=1Gi --task-timeout=600s --max-retries=0 \
+  --set-env-vars=GCS_BUCKET_NAME=$BUCKET,GITHUB_REPO=YOUR_GH_USER/YOUR_REPO \
+  --set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GITHUB_TOKEN=GITHUB_TOKEN:latest
+```
+
+`--max-retries=0` is load-bearing — a retried execution would re-run the
+whole clone→CLI→push flow and could push the branch twice; better to just
+surface the failure and let you re-trigger it from the page.
+
+Grant this job's service account the same bucket access as the others
+(step 0's `SA`, or the job's own runtime SA if you set a custom one):
+
+```sh
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+  --member=serviceAccount:$SA --role=roles/storage.objectAdmin
+```
+
+**Update `trading-web`** — it needs `GITHUB_TOKEN` (for the merge/revert
+push), `GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` (it sends the confirmation-code
+and risk-notification emails directly now, not just the daily-summary job),
+and enough config to call the job's `:run` API:
+
+```sh
+gcloud run services update trading-web --region $REGION \
+  --set-env-vars=GITHUB_REPO=YOUR_GH_USER/YOUR_REPO,GCP_PROJECT=YOUR_PROJECT_ID,GCP_REGION=$REGION,CODEMODE_JOB_NAME=trading-codemode \
+  --update-secrets=GITHUB_TOKEN=GITHUB_TOKEN:latest,GMAIL_ADDRESS=GMAIL_ADDRESS:latest,GMAIL_APP_PASSWORD=GMAIL_APP_PASSWORD:latest
+```
+
+`trading-web`'s runtime service account also needs permission to start the
+job (`run.jobs.run`, part of `roles/run.developer`):
+
+```sh
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member=serviceAccount:$SA --role=roles/run.developer
+```
+
+That's project-wide; narrow it to just this job afterward if you'd rather
+(`gcloud run jobs add-iam-policy-binding trading-codemode --region=$REGION
+--member=serviceAccount:$SA --role=roles/run.developer`).
+
+**Try it:** open `trading-web`, type an instruction in the "Code mode" card,
+wait for the diff, check your email for the 4-digit code, enter it with
+"run it". The merge push to `main` fires the existing `trading-web-deploy`
+trigger from step 2, same as any other push.
+
 ## Notes
 
 - `WATCHLIST`, `MAX_POSITION_NOTIONAL_USD`, etc. in `trading/config.py`
@@ -229,5 +302,10 @@ something.
 - The paper-trading-only Alpaca endpoint is still hardcoded in
   `config.py`; nothing in this deploy path touches live trading.
 - `requirements.txt` gained `yfinance` (already imported by
-  `agents/research_fundamentals.py`, previously missing from the file) and
-  `google-cloud-storage` (for the new GCS-backed storage).
+  `agents/research_fundamentals.py`, previously missing from the file),
+  `google-cloud-storage` (for the new GCS-backed storage), and
+  `google-auth` (code mode uses it to call the Cloud Run Jobs API).
+- Code mode edits are unrestricted by file path beyond the CLI's own
+  `--allowedTools`/`--disallowedTools` allowlist — asking it to edit
+  `cloudbuild.yaml` or this file is allowed, same trust level as any other
+  file in the repo. Known scope, not an oversight.

@@ -40,3 +40,11 @@ GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME")
 MAX_POSITION_NOTIONAL_USD = 1000.0       # max $ in a single symbol per trade
 MAX_DAILY_TRADES = 5                     # max approved trades per calendar day
 MAX_PORTFOLIO_NOTIONAL_USD = 5000.0      # max total $ deployed across positions
+
+# Code mode (Klaus editing this repo from the trading-web page). The actual
+# Claude Code CLI run happens in a separate Cloud Run Job (trading-codemode),
+# triggered by trading/codemode.py from the web service - see trading/DEPLOY.md.
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "Maggierose08/Klaus")
+GCP_PROJECT = os.environ.get("GCP_PROJECT")
+GCP_REGION = os.environ.get("GCP_REGION", "us-east4")
+CODEMODE_JOB_NAME = os.environ.get("CODEMODE_JOB_NAME", "trading-codemode")
