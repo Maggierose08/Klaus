@@ -56,11 +56,37 @@ The commands below use `--set-secrets` assuming you did this. If you'd
 rather use plain env vars, swap `--set-secrets` for `--set-env-vars` with
 literal `KEY=value` pairs.
 
-## 1. Build and push the images
+Grant the runtime service account (default compute service account unless
+you set one) access to the bucket and secrets **now, before deploying** —
+`gcloud run deploy`/`jobs create` validate secret access at revision-creation
+time, so granting access afterward (as an earlier version of this doc did)
+fails with `Permission denied on secret ...`:
 
 ```sh
-gcloud builds submit --tag $REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/web -f Dockerfile .
-gcloud builds submit --tag $REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/job -f Dockerfile.job .
+PROJECT_NUMBER=$(gcloud projects describe YOUR_PROJECT_ID --format='value(projectNumber)')
+SA=$PROJECT_NUMBER-compute@developer.gserviceaccount.com
+
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+  --member=serviceAccount:$SA --role=roles/storage.objectAdmin
+for name in ALPACA_API_KEY ALPACA_SECRET_KEY ANTHROPIC_API_KEY GMAIL_ADDRESS GMAIL_APP_PASSWORD; do
+  gcloud secrets add-iam-policy-binding $name \
+    --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor
+done
+```
+
+(Add `APP_PASSWORD` to that loop too once you've created it, in step 2.)
+
+## 1. Build and push the images
+
+`gcloud builds submit --tag` always builds a file literally named
+`Dockerfile` in the source root, with no `-f` flag to pick a different one
+(current gcloud CLI). That's fine for the web image; the job image needs a
+one-line `cloudbuild.job.yaml` (already in the repo root) to point at
+`Dockerfile.job`:
+
+```sh
+gcloud builds submit --tag $REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/web .
+gcloud builds submit --config=cloudbuild.job.yaml --substitutions=_TAG=$REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/job .
 ```
 
 ## 2. Cloud Run Service (web Q&A app)
@@ -84,26 +110,16 @@ Basic Auth (your phone's browser will just prompt once and remember it):
 
 ```sh
 echo -n "pick-a-password" | gcloud secrets create APP_PASSWORD --data-file=-
+gcloud secrets add-iam-policy-binding APP_PASSWORD \
+  --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor
 gcloud run services update trading-web --region $REGION \
   --update-secrets=APP_PASSWORD=APP_PASSWORD:latest
-```
-
-After deploying, grant the job/service's runtime service account access to
-the bucket and secrets (default compute service account unless you set one):
-
-```sh
-SA=$(gcloud run services describe trading-web --region $REGION --format='value(spec.template.spec.serviceAccountName)')
-gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
-  --member=serviceAccount:$SA --role=roles/storage.objectAdmin
-for name in ALPACA_API_KEY ALPACA_SECRET_KEY ANTHROPIC_API_KEY GMAIL_ADDRESS GMAIL_APP_PASSWORD APP_PASSWORD; do
-  gcloud secrets add-iam-policy-binding $name \
-    --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor
-done
 ```
 
 ## 3. Cloud Run Jobs (pipeline + daily summary)
 
 Same image for both; the daily-summary job just overrides the command.
+(Bucket/secret access was already granted to `$SA` in step 0.)
 
 ```sh
 gcloud run jobs create trading-pipeline \
@@ -160,8 +176,17 @@ gcloud scheduler jobs create http trading-summary-400et \
 ```sh
 gcloud run jobs execute trading-pipeline --region $REGION --wait
 gcloud run jobs execute trading-daily-summary --region $REGION --wait
-curl https://<your-trading-web-url>/healthz
+curl -u "user:$APP_PASSWORD" https://<your-trading-web-url>/
 ```
+
+Note: the exact path `/healthz` (no trailing slash) on the default
+`*.run.app` domain gets intercepted upstream of the container and returns
+Google's generic 404 page instead of reaching the Flask route — observed on
+this project's `trading-web`. `/healthz/` (trailing slash) and `/` do reach
+the app normally. Harmless (Cloud Run's own container startup probe is
+TCP-based, not HTTP, so this doesn't affect deploys), but don't rely on
+`/healthz` for manual or external monitoring checks against the default
+domain.
 
 Then open the `trading-web` URL (`gcloud run services describe trading-web
 --region $REGION --format='value(status.url)'`) on your phone and ask it
