@@ -27,6 +27,14 @@ WATCHLIST = ["AAPL", "MSFT", "SPY"]
 JOURNAL_PATH = os.path.join(TRADING_DIR, "journal.json")
 SUMMARIES_DIR = os.path.join(TRADING_DIR, "summaries")
 
+# When set, journal entries and daily summaries are read/written to this GCS
+# bucket instead of local disk. Required on Cloud Run: the pipeline job, the
+# daily-summary job, and the web service each run in their own ephemeral
+# container and don't share a filesystem, so local files wouldn't persist
+# between runs or be visible to the web service. Left unset for local/laptop
+# runs (Task Scheduler .bat files), which keep using local files as before.
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME")
+
 # Risk limits enforced by risk_manager.py. Conservative defaults for a paper
 # account; tune as you get a feel for how the pipeline behaves.
 MAX_POSITION_NOTIONAL_USD = 1000.0       # max $ in a single symbol per trade

@@ -1,0 +1,13 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+trading/__pycache__
+trading/agents/__pycache__
+trading/journal.json
+trading/summaries/
+*.bat
+claus_restart.txt
+orb_restart.txt
+orb_level.txt
+orb_status.txt

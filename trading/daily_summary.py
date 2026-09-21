@@ -6,9 +6,9 @@ from email.message import EmailMessage
 
 import anthropic
 
-from . import config
 from . import journal
 from . import data_client
+from . import storage
 
 _client = None
 
@@ -80,11 +80,13 @@ def generate_daily_summary(target_date: date = None) -> str:
     return "".join(b.text for b in response.content if b.type == "text")
 
 
+def _summary_blob(target_date: date):
+    return f"summaries/{target_date.isoformat()}.txt"
+
+
 def save_summary(target_date: date, text: str):
-    os.makedirs(config.SUMMARIES_DIR, exist_ok=True)
-    path = os.path.join(config.SUMMARIES_DIR, f"{target_date.isoformat()}.txt")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    path = _summary_blob(target_date)
+    storage.write_text(path, text)
     return path
 
 
@@ -93,10 +95,10 @@ def get_todays_summary(regenerate=False) -> str:
     cached summary if the scheduled weekday run already produced one;
     otherwise generates fresh (e.g. asked mid-day, or no scheduled task set up)."""
     today = date.today()
-    path = os.path.join(config.SUMMARIES_DIR, f"{today.isoformat()}.txt")
-    if not regenerate and os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            return f.read()
+    if not regenerate:
+        cached = storage.read_text(_summary_blob(today))
+        if cached is not None:
+            return cached
     return generate_daily_summary(today)
 
 

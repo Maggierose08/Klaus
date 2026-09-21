@@ -1,20 +1,21 @@
 import json
-import os
 import threading
 from datetime import datetime, date
 
-from .config import JOURNAL_PATH
+from . import storage
+
+JOURNAL_BLOB = "journal.json"
 
 _lock = threading.Lock()
 
 
 def _read_all():
-    if not os.path.exists(JOURNAL_PATH):
+    text = storage.read_text(JOURNAL_BLOB)
+    if text is None:
         return []
     try:
-        with open(JOURNAL_PATH) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+        return json.loads(text)
+    except json.JSONDecodeError:
         return []
 
 
@@ -26,8 +27,7 @@ def record_entry(entry: dict):
     with _lock:
         entries = _read_all()
         entries.append(entry)
-        with open(JOURNAL_PATH, "w") as f:
-            json.dump(entries, f, indent=2)
+        storage.write_text(JOURNAL_BLOB, json.dumps(entries, indent=2))
     return entry
 
 
