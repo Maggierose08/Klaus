@@ -1,7 +1,13 @@
+import ipaddress
 import json
 import os
+import re
+import socket
+from urllib.parse import urljoin, urlparse
 
 import anthropic
+import requests
+from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, render_template_string, request
 
 from . import config
@@ -9,6 +15,9 @@ from . import data_client
 from . import journal
 
 app = Flask(__name__)
+# Bounds request size (mainly for /chat image uploads) so a huge upload
+# doesn't tie up the container; 413s are turned into JSON below.
+app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 
 _client = None
 
@@ -29,6 +38,154 @@ SYSTEM_PROMPT = (
     "you'd explain it to the account owner. If the data doesn't cover what "
     "was asked, say so honestly instead of guessing."
 )
+
+# Klaus's general-purpose personality, adapted from claus.py's SYSTEM_PROMPT
+# for a text/web context: no "keep it short, this gets read aloud" limit,
+# and no code-mode trigger (this deployment can't run Claude Code or restart
+# the local voice assistant, so offering that here would be a dead end).
+KLAUS_SYSTEM_PROMPT = (
+    "You are Klaus - same guy as always, just typing instead of talking "
+    "right now. Blunt, deadpan, sarcastic - you don't sugarcoat anything "
+    "and you're not impressed easily. Crude and a little rude is fine, "
+    "keep it funny not mean, no slurs or actually hateful stuff. Drop a "
+    "joke or a smartass remark when it fits, but still actually answer the "
+    "question - don't let the bit get in the way of being useful. Use web "
+    "search when you need current info you're not sure about. You can see "
+    "images the user attaches and read the text of any web page pulled in "
+    "below their message when relevant - just use it directly, don't "
+    "narrate that you 'received' it or describe the mechanism."
+)
+
+# Content-block "image" media types the Anthropic API accepts.
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
+# Caps the /chat message list server-side too (defense in depth - the
+# frontend already trims its own history to roughly this size).
+KLAUS_MAX_HISTORY_MESSAGES = 40
+
+_URL_PATTERN = re.compile(r'https?://[^\s<>"\')]+')
+
+URL_FETCH_TIMEOUT = 8
+URL_FETCH_MAX_BYTES = 3 * 1024 * 1024
+URL_TEXT_LIMIT = 6000
+
+
+def _extract_first_url(text):
+    if not text:
+        return None
+    match = _URL_PATTERN.search(text)
+    return match.group(0).rstrip(".,;:!?") if match else None
+
+
+def _is_public_http_url(url):
+    """Rejects loopback/private/link-local targets - notably GCP's metadata
+    server at 169.254.169.254, which would hand over the container's
+    service-account credentials to anything that can make it fetch that
+    URL. Every redirect hop gets re-checked by _fetch_url_text, not just
+    the URL the user typed."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        for info in socket.getaddrinfo(parsed.hostname, None):
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+    except (socket.gaierror, ValueError, UnicodeError):
+        return False
+
+
+def _fetch_url_text(url):
+    """Fetches a page and returns (final_url, title, text). Follows
+    redirects manually (capped) so each hop is validated by
+    _is_public_http_url too - requests' built-in redirect following would
+    skip that check and could be steered at an internal address."""
+    for _ in range(5):
+        if not _is_public_http_url(url):
+            raise ValueError("that link points somewhere I'm not allowed to fetch")
+        resp = requests.get(
+            url, timeout=URL_FETCH_TIMEOUT, allow_redirects=False, stream=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; KlausBot/1.0)"},
+        )
+        if resp.is_redirect:
+            location = resp.headers.get("Location")
+            resp.close()
+            if not location:
+                raise ValueError("that link redirected with no destination")
+            url = urljoin(url, location)
+            continue
+        break
+    else:
+        raise ValueError("too many redirects")
+
+    content_type = resp.headers.get("Content-Type", "")
+    if "text/html" not in content_type and "text/plain" not in content_type:
+        resp.close()
+        raise ValueError(f"that's a {content_type or 'binary'} link, not something I can read")
+
+    raw = resp.raw.read(URL_FETCH_MAX_BYTES + 1, decode_content=True)
+    resp.close()
+    raw = raw[:URL_FETCH_MAX_BYTES]
+
+    if "text/plain" in content_type:
+        text = raw.decode(resp.encoding or "utf-8", errors="replace")
+        title = None
+    else:
+        soup = BeautifulSoup(raw, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        title = soup.title.string.strip() if soup.title and soup.title.string else None
+        text = soup.get_text(separator=" ", strip=True)
+
+    return url, title, text[:URL_TEXT_LIMIT]
+
+
+def _augment_messages_with_url(messages):
+    """If the latest user message contains a URL, fetches it and returns a
+    copy of `messages` with the page text appended to that turn - used only
+    for this one Claude call. The fetched text is never handed back to the
+    client to store, so a long page doesn't get re-sent (and re-billed) on
+    every follow-up turn; only Klaus's resulting answer persists in the
+    conversation from there. Returns (messages_for_claude, fetched_info),
+    where fetched_info is None if no URL was found."""
+    if not messages or messages[-1].get("role") != "user":
+        return messages, None
+
+    content = messages[-1].get("content")
+    if isinstance(content, str):
+        text_parts = [content]
+    elif isinstance(content, list):
+        text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    else:
+        text_parts = []
+
+    url = _extract_first_url(" ".join(text_parts))
+    if not url:
+        return messages, None
+
+    try:
+        final_url, title, text = _fetch_url_text(url)
+    except Exception as e:
+        note = f"\n\n[Tried to fetch {url} but couldn't: {e}]"
+        fetched_info = None
+    else:
+        titled = f" ({title})" if title else ""
+        note = f"\n\n[Fetched content from {final_url}{titled}:\n{text}]"
+        fetched_info = {"url": final_url, "title": title}
+
+    if isinstance(content, str):
+        new_content = content + note
+    else:
+        new_content = list(content) + [{"type": "text", "text": note.strip()}]
+
+    augmented = list(messages[:-1]) + [{"role": "user", "content": new_content}]
+    return augmented, fetched_info
+
+
+@app.errorhandler(413)
+def _request_too_large(e):
+    return jsonify({"error": "That's too big to send (max ~12MB)."}), 413
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -268,6 +425,101 @@ PAGE = """<!doctype html>
   }
   .answer.error { color: var(--bad-text); }
   .hint { margin-top: 10px; font-size: 0.78rem; color: var(--ink-muted); }
+
+  /* Klaus chat card */
+  .chatlog {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    min-width: 0;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 10px 13px;
+    border-radius: 14px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: var(--buy);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .bubble.assistant {
+    align-self: flex-start;
+    background: var(--page-plane);
+    border: 1px solid var(--hairline);
+    color: var(--ink);
+    border-bottom-left-radius: 4px;
+  }
+  .bubble.thinking { color: var(--ink-muted); font-style: italic; }
+  .bubble.error { color: var(--bad-text); }
+  .bubble img.attach {
+    max-width: 100%;
+    border-radius: 8px;
+    margin-top: 6px;
+    display: block;
+  }
+  .bubble .fetched-chip {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.75rem;
+    opacity: 0.8;
+  }
+  .chat-composer { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .image-preview-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+  }
+  .image-preview-wrap img {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 6px;
+  }
+  .image-preview-wrap span { font-size: 0.8rem; color: var(--ink-muted); }
+  .image-preview-wrap button {
+    margin-left: auto;
+    width: auto;
+    padding: 4px 8px;
+    background: none;
+    border: none;
+    color: var(--bad-text);
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  .chat-input-row { display: flex; gap: 8px; align-items: flex-end; min-width: 0; }
+  .chat-input-row textarea { flex: 1; min-height: 44px; }
+  .chat-input-row button {
+    width: auto;
+    margin-top: 0;
+    flex: none;
+    cursor: pointer;
+  }
+  .attach-btn {
+    width: 44px !important;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 1.15rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .send-btn { padding: 0 20px; height: 44px; }
 </style>
 </head>
 <body>
@@ -294,11 +546,30 @@ PAGE = """<!doctype html>
   </div>
 
   <div class="card">
-    <h2>Ask</h2>
+    <h2>Ask about trading</h2>
     <textarea id="question" placeholder="e.g. how's trading going today?"></textarea>
     <button id="submit">Ask</button>
     <div class="hint">Enter to submit &middot; Shift+Enter for a new line</div>
     <div id="answer" class="answer"></div>
+  </div>
+
+  <div class="card">
+    <h2>Chat with Klaus</h2>
+    <div class="chatlog" id="chatlog"></div>
+    <div class="chat-composer">
+      <div class="image-preview-wrap" id="imagePreviewWrap" style="display:none">
+        <img id="imagePreview" alt="attached image">
+        <span>Image attached</span>
+        <button id="removeImageBtn" type="button" title="Remove image">&times;</button>
+      </div>
+      <div class="chat-input-row">
+        <input type="file" id="imageInput" accept="image/*" hidden>
+        <button class="attach-btn" id="attachBtn" type="button" title="Attach a screenshot">&#128247;</button>
+        <textarea id="chatText" placeholder="Message Klaus..."></textarea>
+        <button class="send-btn" id="chatSend" type="button">Send</button>
+      </div>
+      <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; images &amp; links work too</div>
+    </div>
   </div>
 </div>
 <script>
@@ -464,6 +735,146 @@ PAGE = """<!doctype html>
       ask();
     }
   });
+
+  // --- Chat with Klaus: general Q&A, image upload, link reading ---
+  const chatHistory = [];  // Anthropic-format messages, kept client-side only
+  let pendingImage = null; // { mediaType, base64, dataUrl }
+  const MAX_CHAT_HISTORY = 40;
+  const MAX_IMAGE_DIMENSION = 1600;
+
+  const chatlogEl = document.getElementById('chatlog');
+  const chatTextEl = document.getElementById('chatText');
+  const chatSendEl = document.getElementById('chatSend');
+  const attachBtnEl = document.getElementById('attachBtn');
+  const imageInputEl = document.getElementById('imageInput');
+  const imagePreviewWrapEl = document.getElementById('imagePreviewWrap');
+  const imagePreviewEl = document.getElementById('imagePreview');
+  const removeImageBtnEl = document.getElementById('removeImageBtn');
+
+  function appendBubble(roleClasses, text, imageDataUrl) {
+    const div = document.createElement('div');
+    div.className = 'bubble ' + roleClasses;
+    div.textContent = text;
+    if (imageDataUrl) {
+      const img = document.createElement('img');
+      img.className = 'attach';
+      img.src = imageDataUrl;
+      div.appendChild(img);
+    }
+    chatlogEl.appendChild(div);
+    chatlogEl.scrollTop = chatlogEl.scrollHeight;
+    return div;
+  }
+
+  function resizeImageIfNeeded(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read that file.'));
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        if (file.size <= 2 * 1024 * 1024) {
+          resolve({ mediaType: file.type, base64: dataUrl.split(',')[1], dataUrl });
+          return;
+        }
+        const img = new Image();
+        img.onerror = () => reject(new Error('Could not read that image.'));
+        img.onload = () => {
+          let width = img.width, height = img.height;
+          const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(width, height));
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          const outUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve({ mediaType: 'image/jpeg', base64: outUrl.split(',')[1], dataUrl: outUrl });
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  attachBtnEl.addEventListener('click', () => imageInputEl.click());
+  imageInputEl.addEventListener('change', async () => {
+    const file = imageInputEl.files[0];
+    imageInputEl.value = '';
+    if (!file) return;
+    try {
+      pendingImage = await resizeImageIfNeeded(file);
+      imagePreviewEl.src = pendingImage.dataUrl;
+      imagePreviewWrapEl.style.display = 'flex';
+    } catch (err) {
+      pendingImage = null;
+      alert(err.message || 'Could not attach that image.');
+    }
+  });
+  removeImageBtnEl.addEventListener('click', () => {
+    pendingImage = null;
+    imagePreviewWrapEl.style.display = 'none';
+  });
+
+  async function sendChat() {
+    const text = chatTextEl.value.trim();
+    if (!text && !pendingImage) return;
+
+    const contentBlocks = [];
+    if (pendingImage) {
+      contentBlocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: pendingImage.mediaType, data: pendingImage.base64 },
+      });
+    }
+    contentBlocks.push({ type: 'text', text: text || '(see attached image)' });
+
+    appendBubble('user', text || '(image attached)', pendingImage ? pendingImage.dataUrl : null);
+    chatHistory.push({ role: 'user', content: contentBlocks });
+    if (chatHistory.length > MAX_CHAT_HISTORY) {
+      chatHistory.splice(0, chatHistory.length - MAX_CHAT_HISTORY);
+    }
+
+    chatTextEl.value = '';
+    pendingImage = null;
+    imagePreviewWrapEl.style.display = 'none';
+    chatSendEl.disabled = true;
+    const thinkingBubble = appendBubble('assistant thinking', 'Thinking...');
+
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: chatHistory }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+
+      thinkingBubble.classList.remove('thinking');
+      thinkingBubble.textContent = data.answer;
+      if (data.fetched) {
+        const chip = document.createElement('span');
+        chip.className = 'fetched-chip';
+        chip.textContent = '🔗 read ' + (data.fetched.title || data.fetched.url);
+        thinkingBubble.appendChild(chip);
+      }
+      chatHistory.push({ role: 'assistant', content: [{ type: 'text', text: data.answer }] });
+    } catch (err) {
+      thinkingBubble.classList.remove('thinking');
+      thinkingBubble.classList.add('error');
+      thinkingBubble.textContent = err.message || 'Something went wrong.';
+      chatHistory.pop(); // drop the failed user turn so a retry doesn't duplicate it
+    } finally {
+      chatSendEl.disabled = false;
+    }
+  }
+
+  chatSendEl.addEventListener('click', sendChat);
+  chatTextEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  });
 </script>
 </body>
 </html>
@@ -599,6 +1010,45 @@ def ask():
 
     answer = "".join(b.text for b in response.content if b.type == "text")
     return jsonify({"answer": answer})
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    """General-purpose Klaus chat: conversation, image attachments (vision),
+    and link reading. Separate from /ask (trading-only Q&A above) by design -
+    that endpoint and its behavior are unchanged."""
+    body = request.get_json(silent=True) or {}
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return jsonify({"error": "No message."}), 400
+
+    messages = messages[-KLAUS_MAX_HISTORY_MESSAGES:]
+
+    for m in messages:
+        content = m.get("content") if isinstance(m, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "image":
+                media_type = (block.get("source") or {}).get("media_type")
+                if media_type not in ALLOWED_IMAGE_TYPES:
+                    return jsonify({"error": f"Unsupported image type: {media_type}"}), 400
+
+    augmented_messages, fetched = _augment_messages_with_url(messages)
+
+    try:
+        response = _get_client().messages.create(
+            model=CHAT_MODEL,
+            max_tokens=1024,
+            system=KLAUS_SYSTEM_PROMPT,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+            messages=augmented_messages,
+        )
+    except anthropic.APIError as e:
+        return jsonify({"error": f"Claude request failed: {e}"}), 502
+
+    answer = "".join(b.text for b in response.content if b.type == "text")
+    return jsonify({"answer": answer, "fetched": fetched})
 
 
 if __name__ == "__main__":
