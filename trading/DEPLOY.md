@@ -225,11 +225,16 @@ something.
 
 Adds a third deployable: **`trading-codemode`**, a Cloud Run Job built from
 `Dockerfile.codemode` that runs the actual Claude Code CLI (Node + git,
-`--permission-mode acceptEdits`, same `--allowedTools`/`--disallowedTools`
-allowlist as `claus.py`'s local `run_claude_code`). It's kept isolated from
-`trading-web` on purpose — `trading-web` itself only runs plain, fixed-
-argument `git` commands (merge/revert/push), never the agentic CLI. See
-`trading/codemode.py` and `trading/codemode_job.py`.
+`--permission-mode acceptEdits`, an `--allowedTools`/`--disallowedTools`
+allowlist modeled on `claus.py`'s local `run_claude_code` — but *without*
+`Bash(git *)`: this job's repo is cloned with a push-capable GitHub token,
+so unlike the local version, letting the model run arbitrary git commands
+would let it push straight to main itself. All git operations, including
+the token-authenticated push, stay under `codemode_job.py`'s own control,
+never the model's). It's kept isolated from `trading-web` on purpose —
+`trading-web` itself only runs plain, fixed-argument `git` commands (merge/
+revert/push), never the agentic CLI. See `trading/codemode.py` and
+`trading/codemode_job.py`.
 
 **New secret** — a GitHub PAT scoped to just this repo (fine-grained token,
 Contents: Read and write, no other permissions):
@@ -249,10 +254,18 @@ gcloud builds submit --config=cloudbuild.codemode.yaml \
 gcloud run jobs create trading-codemode \
   --image $REGION-docker.pkg.dev/YOUR_PROJECT_ID/trading/codemode \
   --region $REGION \
-  --memory=1Gi --task-timeout=600s --max-retries=0 \
+  --memory=1Gi --task-timeout=900s --max-retries=0 \
   --set-env-vars=GCS_BUCKET_NAME=$BUCKET,GITHUB_REPO=YOUR_GH_USER/YOUR_REPO \
   --set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GITHUB_TOKEN=GITHUB_TOKEN:latest
 ```
+
+`--task-timeout=900s` is deliberately well above `codemode_job.py`'s own
+`CLI_TIMEOUT_SECONDS` (600s, for the `claude` call alone) — it also has to
+cover clone/checkout before that call and status/add/commit/diff/push
+after it. If this is ever set at or below 600s, Cloud Run can kill the
+whole task before the job's own timeout handling or push step ever runs,
+leaving the request stuck at "running" with no error surfaced (`trading/
+codemode.py`'s `JOB_STALE_MINUTES` eventually recovers it, but silently).
 
 `--max-retries=0` is load-bearing — a retried execution would re-run the
 whole clone→CLI→push flow and could push the branch twice; better to just
@@ -269,7 +282,11 @@ gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
 **Update `trading-web`** — it needs `GITHUB_TOKEN` (for the merge/revert
 push), `GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` (it sends the confirmation-code
 and risk-notification emails directly now, not just the daily-summary job),
-and enough config to call the job's `:run` API:
+and enough config to call the job's `:run` API. **`APP_PASSWORD` (step 2)
+is no longer optional once you deploy this** — `/codemode/*` refuses to run
+at all unless it's set, regardless of whether the rest of the app is
+password-gated, since it starts an agentic job with a push-capable token
+and shouldn't be reachable by anyone who just finds the URL:
 
 ```sh
 gcloud run services update trading-web --region $REGION \

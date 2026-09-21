@@ -37,7 +37,18 @@ LOG_BLOB = "codemode/log.json"
 CODE_TTL_MINUTES = 15
 MAX_CODE_ATTEMPTS = 5
 UNDO_WINDOW_HOURS = 24
-JOB_STALE_MINUTES = 15  # if the job never reports back, stop blocking new requests
+# If the job never reports back, stop blocking new requests. Generous on
+# purpose: the job's own worst case is CLI_TIMEOUT_SECONDS (600s) for the
+# claude call alone, plus clone/checkout before it and status/add/commit/
+# diff/push after it, plus Cloud Run scheduling/cold-start - keep this above
+# the job's --task-timeout (see trading/DEPLOY.md) so a still-healthy job is
+# never declared stale before Cloud Run itself would have killed it.
+JOB_STALE_MINUTES = 20
+# Merge/revert are a handful of local git subprocess calls (60-120s timeouts
+# each) - much faster than the job above, so a much shorter bound is enough
+# to recover from a crash/restart mid-merge without falsely clearing a merge
+# that's genuinely still running.
+CONFIRM_STALE_MINUTES = 10
 CONFIRM_PHRASE = "run it"
 
 # File-level match, not line-level: any diff touching these files is treated
@@ -79,9 +90,11 @@ def _write_pending_raw(pending):
 
 def _effective_pending():
     """Reads the pending record, auto-clearing (and returning None for) a
-    stale one: a job that never reported back, or a diff_ready request whose
+    stale one: a job that never reported back, a diff_ready request whose
     confirmation code expired without anyone confirming or getting locked
-    out. Keeps a forgotten request from blocking new ones forever."""
+    out, or a merge left stuck mid-flight by a crash/restart (status
+    "confirming" - see confirm_request). Keeps a forgotten or interrupted
+    request from blocking new ones forever."""
     pending = _read_pending_raw()
     if not pending:
         return None
@@ -93,6 +106,11 @@ def _effective_pending():
             return None
     elif pending["status"] == "diff_ready" and pending.get("code_expires_at"):
         if _now_iso() > pending["code_expires_at"]:
+            _write_pending_raw(None)
+            return None
+    elif pending["status"] == "confirming" and pending.get("confirming_at"):
+        confirming_since = datetime.fromisoformat(pending["confirming_at"])
+        if _now() - confirming_since > timedelta(minutes=CONFIRM_STALE_MINUTES):
             _write_pending_raw(None)
             return None
 
@@ -326,6 +344,7 @@ def start_request(instruction):
             "error_message": None,
             "created_at": _now_iso(),
             "diff_ready_at": None,
+            "confirming_at": None,
             "code": None,
             "code_expires_at": None,
             "attempts": 0,
@@ -396,6 +415,7 @@ def confirm_request(request_id, code, phrase):
 
         # Correct - claim it so a second concurrent confirm can't double-merge.
         pending["status"] = "confirming"
+        pending["confirming_at"] = _now_iso()
         _write_pending_raw(pending)
 
     try:

@@ -1068,37 +1068,75 @@ PAGE = """<!doctype html>
     }
   }
 
+  // Builds each log row via textContent (not innerHTML string concatenation)
+  // since e.instruction and e.files_changed are attacker-controllable -
+  // anyone who can call /codemode/request chooses that text verbatim.
+  function buildCodeLogEntry(e, canUndo) {
+    const entry = document.createElement('div');
+    entry.className = 'codelog-entry';
+
+    const meta = document.createElement('div');
+    meta.className = 'codelog-meta';
+    const timeSpan = document.createElement('span');
+    timeSpan.textContent = fmtTime(e.confirmed_at || e.requested_at);
+    const statusSpan = document.createElement('span');
+    statusSpan.className = 'codelog-status ' + e.status;
+    statusSpan.textContent = e.status + (e.undone_at ? ' (undone)' : '');
+    meta.appendChild(timeSpan);
+    meta.appendChild(statusSpan);
+    entry.appendChild(meta);
+
+    const instructionDiv = document.createElement('div');
+    instructionDiv.textContent = e.instruction || '';
+    entry.appendChild(instructionDiv);
+
+    const files = (e.files_changed || []).join(', ');
+    if (files) {
+      const filesDiv = document.createElement('div');
+      filesDiv.className = 'hint';
+      filesDiv.textContent = files;
+      entry.appendChild(filesDiv);
+    }
+
+    if (canUndo) {
+      const undoBtn = document.createElement('button');
+      undoBtn.type = 'button';
+      undoBtn.className = 'undo-btn';
+      undoBtn.textContent = 'Undo';
+      undoBtn.addEventListener('click', () => undoLastMerge(undoBtn));
+      entry.appendChild(undoBtn);
+    }
+
+    return entry;
+  }
+
   async function loadCodeLog() {
     try {
       const res = await fetch('/codemode/log');
       const data = await res.json();
       const entries = data.entries || [];
+      codeLogEl.replaceChildren();
       if (!entries.length) {
-        codeLogEl.innerHTML = '<div class="empty">No code-mode changes yet.</div>';
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No code-mode changes yet.';
+        codeLogEl.appendChild(empty);
         return;
       }
       let undoShown = false;
-      codeLogEl.innerHTML = entries.map(e => {
+      for (const e of entries) {
         const isRecentMerge = !undoShown && e.status === 'merged' && !e.undone_at;
         const withinWindow = isRecentMerge &&
           (Date.now() - new Date(e.confirmed_at).getTime()) < 24 * 3600 * 1000;
         if (isRecentMerge) undoShown = true; // only the single most recent merge is ever eligible
-        const undoBtn = withinWindow ? '<button type="button" class="undo-btn">Undo</button>' : '';
-        const undoneNote = e.undone_at ? ' (undone)' : '';
-        const files = (e.files_changed || []).join(', ');
-        return (
-          '<div class="codelog-entry">' +
-            '<div class="codelog-meta"><span>' + fmtTime(e.confirmed_at || e.requested_at) + '</span>' +
-              '<span class="codelog-status ' + e.status + '">' + e.status + undoneNote + '</span></div>' +
-            '<div>' + (e.instruction || '') + '</div>' +
-            (files ? '<div class="hint">' + files + '</div>' : '') +
-            undoBtn +
-          '</div>'
-        );
-      }).join('');
-      codeLogEl.querySelectorAll('.undo-btn').forEach(btn => btn.addEventListener('click', () => undoLastMerge(btn)));
+        codeLogEl.appendChild(buildCodeLogEntry(e, withinWindow));
+      }
     } catch (err) {
-      codeLogEl.innerHTML = '<div class="empty">Could not load the log.</div>';
+      codeLogEl.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'Could not load the log.';
+      codeLogEl.appendChild(empty);
     }
   }
 
@@ -1117,8 +1155,17 @@ def _require_app_password():
     browser with no extra setup, so it's typically deployed with
     --allow-unauthenticated. Setting APP_PASSWORD adds a basic-auth prompt so
     a stranger who finds the URL can't read your account/journal data. Unset
-    (the default) means no gate, matching the original open behavior."""
+    (the default) means no gate, matching the original open behavior.
+
+    /codemode/* is the one exception: it starts an agentic, Bash-capable
+    Cloud Run Job against this repo with a push-capable GitHub token, a
+    categorically bigger blast radius than the read-mostly chat/data routes
+    this gate was designed around - so it refuses to run at all unless
+    APP_PASSWORD is actually set, regardless of the rest of the app's
+    auth mode."""
     password = os.environ.get("APP_PASSWORD")
+    if request.path.startswith("/codemode/") and not password:
+        return jsonify({"error": "Code mode requires APP_PASSWORD to be configured on this deployment."}), 503
     if not password or request.path == "/healthz":
         return None
     auth = request.authorization
