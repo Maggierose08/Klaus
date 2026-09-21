@@ -22,3 +22,6 @@ steps:
 images:
   - 'us-east4-docker.pkg.dev/klaus-508805/trading/web:$SHORT_SHA'
   - 'us-east4-docker.pkg.dev/klaus-508805/trading/web:latest'
+options:
+  # Required when the trigger runs as a custom (non-default) service account.
+  logging: CLOUD_LOGGING_ONLY
