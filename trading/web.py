@@ -436,6 +436,20 @@ PAGE = """<!doctype html>
     cursor: pointer;
   }
   button:disabled { opacity: 0.6; cursor: default; }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
   .answer {
     margin-top: 16px;
     padding: 14px;
@@ -798,7 +812,7 @@ PAGE = """<!doctype html>
     if (!question) return;
 
     submitEl.disabled = true;
-    submitEl.textContent = 'Thinking...';
+    submitEl.innerHTML = '<span class="spinner"></span>Thinking...';
     answerEl.style.display = 'block';
     answerEl.classList.remove('error');
     answerEl.textContent = '...';
@@ -817,7 +831,7 @@ PAGE = """<!doctype html>
       answerEl.textContent = err.message || 'Something went wrong.';
     } finally {
       submitEl.disabled = false;
-      submitEl.textContent = 'Ask';
+      submitEl.innerHTML = 'Ask';
     }
   }
 
