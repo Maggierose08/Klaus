@@ -14,6 +14,7 @@ from . import codemode
 from . import config
 from . import data_client
 from . import journal
+from . import memory
 
 app = Flask(__name__)
 # Bounds request size (mainly for /chat image uploads) so a huge upload
@@ -66,6 +67,13 @@ KLAUS_SYSTEM_PROMPT = (
     "developer) - it gets pre-filled into the Code Mode box for the user to "
     "review and run themselves, so don't make the user write it. Don't call "
     "it for questions that don't actually need a code change. "
+    "You also have long-term memory across separate conversations (not "
+    "just this one) - call remember with a short, self-contained fact when "
+    "something is worth carrying forward: a stated preference, a decision "
+    "that was made, important context about an ongoing project. Don't call "
+    "it for routine back-and-forth that won't matter later, and don't "
+    "narrate that you're remembering something - just do it. Anything "
+    "already remembered from past conversations is listed below, if any. "
     "Stay exactly that casual and agreeable for everyday stuff - don't get "
     "preachy about normal requests. But when something actually involves "
     "money, credentials or security, an irreversible action, or real risk "
@@ -1410,6 +1418,31 @@ def _read_recent_journal_tool(n):
     return json.dumps(entries, default=str)
 
 
+def _remember_tool(fact):
+    entry = memory.remember(fact)
+    if entry is None:
+        return "No fact given - nothing remembered."
+    return "Remembered - this'll be available in future conversations too."
+
+
+# How many of the most recent remembered facts to inject into every /chat
+# system prompt. Separate from memory.MAX_MEMORY_ENTRIES (the storage cap) -
+# this bounds per-request token cost, not the store itself.
+MEMORY_CONTEXT_LIMIT = 50
+
+
+def _build_chat_system_prompt():
+    entries = memory.read_all()[-MEMORY_CONTEXT_LIMIT:]
+    if not entries:
+        return KLAUS_SYSTEM_PROMPT
+    facts = "\n".join(f"- {e['fact']}" for e in entries)
+    return (
+        KLAUS_SYSTEM_PROMPT
+        + "\n\nWhat you remember from past conversations with this user "
+          "(most recent last):\n" + facts
+    )
+
+
 def _run_chat_tool(name, tool_input):
     if name == "read_file":
         return _read_repo_file_tool(tool_input.get("path", ""))
@@ -1419,6 +1452,8 @@ def _run_chat_tool(name, tool_input):
         return _read_recent_journal_tool(tool_input.get("n", 10))
     if name == "propose_code_change":
         return "Drafted - the user will review it in the Code Mode box before anything runs."
+    if name == "remember":
+        return _remember_tool(tool_input.get("fact", ""))
     return f"Unknown tool: {name}"
 
 
@@ -1486,6 +1521,20 @@ CHAT_TOOLS = [
             "required": ["instruction"],
         },
     },
+    {
+        "name": "remember",
+        "description": (
+            "Persist a short, self-contained fact/preference/decision to "
+            "long-term memory so it's available in future conversations, "
+            "not just this one. Use it for things worth carrying forward - "
+            "not for routine back-and-forth that won't matter later."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"fact": {"type": "string"}},
+            "required": ["fact"],
+        },
+    },
 ]
 
 
@@ -1513,6 +1562,10 @@ def chat():
                     return jsonify({"error": f"Unsupported image type: {media_type}"}), 400
 
     augmented_messages, fetched = _augment_messages_with_url(messages)
+    # Built once per request, not per loop iteration - memory doesn't change
+    # mid-request except via this same request's own remember() calls, which
+    # shouldn't retroactively alter the system prompt already in flight.
+    system_prompt = _build_chat_system_prompt()
 
     proposed_instruction = None
     response = None
@@ -1521,7 +1574,7 @@ def chat():
             response = _get_client().messages.create(
                 model=CHAT_MODEL,
                 max_tokens=1024,
-                system=KLAUS_SYSTEM_PROMPT,
+                system=system_prompt,
                 tools=CHAT_TOOLS,
                 messages=augmented_messages,
             )
