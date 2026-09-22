@@ -195,7 +195,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Trading Assistant</title>
+<title>Klaus Trading Dashboard</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -580,7 +580,7 @@ PAGE = """<!doctype html>
 <body>
 <div class="page">
   <header class="pagehead">
-    <h1>Trading Assistant</h1>
+    <h1>Klaus Trading Dashboard</h1>
     <p class="sub">Paper account &middot; live overview &amp; assistant</p>
   </header>
 
