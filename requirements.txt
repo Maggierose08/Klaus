@@ -2,7 +2,7 @@ flask==3.0.3
 gunicorn==22.0.0
 anthropic==1.5.0
 alpaca-py==0.33.1
-yfinance==0.2.44
+yfinance==1.7.0
 google-cloud-storage==2.18.2
 google-auth==2.35.0
 requests==2.34.2
