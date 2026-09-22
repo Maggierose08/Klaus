@@ -965,7 +965,12 @@ PAGE = """<!doctype html>
       if (!res.ok) throw new Error(data.error || 'Something went wrong.');
 
       thinkingBubble.classList.remove('thinking');
-      thinkingBubble.textContent = data.answer;
+      // Defense in depth: never let an empty answer into chatHistory even
+      // if the server ever sends one - Anthropic's API rejects a resubmitted
+      // empty text content block outright (400), which would otherwise
+      // silently break every later message in this conversation.
+      const answerText = data.answer || 'Got it.';
+      thinkingBubble.textContent = answerText;
       if (data.fetched) {
         const chip = document.createElement('span');
         chip.className = 'fetched-chip';
@@ -980,7 +985,7 @@ PAGE = """<!doctype html>
         codeInstructionEl.value = data.proposed_instruction;
         codeInstructionEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-      chatHistory.push({ role: 'assistant', content: [{ type: 'text', text: data.answer }] });
+      chatHistory.push({ role: 'assistant', content: [{ type: 'text', text: answerText }] });
     } catch (err) {
       thinkingBubble.classList.remove('thinking');
       thinkingBubble.classList.add('error');
@@ -1604,8 +1609,15 @@ def chat():
         return jsonify({"error": f"Claude request failed: {e}"}), 502
 
     answer = "".join(b.text for b in response.content if b.type == "text") if response else ""
-    if not answer and proposed_instruction:
-        answer = "Drafted a code change for you to review below."
+    if not answer:
+        # Claude occasionally ends a turn with no (or empty) text content,
+        # e.g. right after a quiet tool call like remember() with nothing
+        # more to add. Anthropic's API rejects an empty text content block
+        # if it's ever resubmitted as history (400 "text content blocks
+        # must be non-empty"), so this can never go out blank - the client
+        # pushes `answer` straight into its own chatHistory and replays it
+        # on the next message.
+        answer = "Drafted a code change for you to review below." if proposed_instruction else "Got it."
     return jsonify({"answer": answer, "fetched": fetched, "proposed_instruction": proposed_instruction})
 
 
