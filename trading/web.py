@@ -56,7 +56,16 @@ KLAUS_SYSTEM_PROMPT = (
     "search when you need current info you're not sure about. You can see "
     "images the user attaches and read the text of any web page pulled in "
     "below their message when relevant - just use it directly, don't "
-    "narrate that you 'received' it or describe the mechanism."
+    "narrate that you 'received' it or describe the mechanism. "
+    "You can also read this repo's own source code (read_file, list_files) "
+    "and recent trading journal entries (read_recent_journal) - use them to "
+    "actually dig into a bug or question about how the trading system "
+    "works, instead of answering generically. If you work out that fixing "
+    "something genuinely needs a code change, call propose_code_change with "
+    "a specific, actionable instruction (write it like you're briefing a "
+    "developer) - it gets pre-filled into the Code Mode box for the user to "
+    "review and run themselves, so don't make the user write it. Don't call "
+    "it for questions that don't actually need a code change."
 )
 
 # Content-block "image" media types the Anthropic API accepts.
@@ -929,6 +938,14 @@ PAGE = """<!doctype html>
         chip.textContent = '🔗 read ' + (data.fetched.title || data.fetched.url);
         thinkingBubble.appendChild(chip);
       }
+      if (data.proposed_instruction) {
+        const chip = document.createElement('span');
+        chip.className = 'fetched-chip';
+        chip.textContent = '📝 drafted a Code Mode instruction below';
+        thinkingBubble.appendChild(chip);
+        codeInstructionEl.value = data.proposed_instruction;
+        codeInstructionEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       chatHistory.push({ role: 'assistant', content: [{ type: 'text', text: data.answer }] });
     } catch (err) {
       thinkingBubble.classList.remove('thinking');
@@ -1289,11 +1306,169 @@ def ask():
     return jsonify({"answer": answer})
 
 
+# --- Codebase-aware chat tools ---
+# Read-only, and a completely separate surface from code mode: no Bash, no
+# git, no Edit/Write. These are plain Python functions the model can call
+# via tool use; codemode.py's agentic CLI (which can actually change files)
+# is a wholly different, much more tightly-gated path.
+
+_SAFE_READ_EXTENSIONS = {".py", ".md", ".yaml", ".yml", ".json", ".txt"}
+_MAX_FILE_READ_BYTES = 200_000
+CHAT_TOOL_ITERATION_LIMIT = 6
+
+
+def _resolve_repo_path(relative_path):
+    """Resolves relative_path under the repo root, or None if it escapes the
+    root (../, absolute paths) or touches a hidden path (.git, .claude,
+    etc.) - same defensive posture as _is_public_http_url's SSRF guard,
+    applied to the filesystem instead of the network."""
+    if not relative_path or os.path.isabs(relative_path):
+        return None
+    root = os.path.normpath(config.PROJECT_DIR)
+    candidate = os.path.normpath(os.path.join(root, relative_path))
+    if candidate != root and not candidate.startswith(root + os.sep):
+        return None
+    # "." and ".." are navigational tokens, not hidden paths - real escapes
+    # via ".." are already caught above by the normalized-path containment
+    # check; a genuine hidden segment (.git, .env, ...) still can't reach a
+    # resolved path without its name literally appearing in relative_path,
+    # so checking raw (pre-normalize) segments here still catches it even
+    # when disguised behind a "foo/.git/../.git/x" - style detour.
+    parts = [p for p in relative_path.replace("\\", "/").split("/") if p and p not in (".", "..")]
+    if any(part.startswith(".") for part in parts):
+        return None
+    return candidate
+
+
+def _read_repo_file_tool(relative_path):
+    path = _resolve_repo_path(relative_path)
+    if path is None:
+        return f"Can't read '{relative_path}' - outside the repo or a hidden path."
+    if not os.path.isfile(path):
+        return f"No such file: {relative_path}"
+    if os.path.splitext(path)[1].lower() not in _SAFE_READ_EXTENSIONS:
+        return f"Can't read '{relative_path}' - only {', '.join(sorted(_SAFE_READ_EXTENSIONS))} files are readable here."
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(_MAX_FILE_READ_BYTES + 1)
+    except OSError as e:
+        return f"Couldn't read {relative_path}: {e}"
+    if len(text) > _MAX_FILE_READ_BYTES:
+        text = text[:_MAX_FILE_READ_BYTES] + "\n...[truncated]"
+    return text
+
+
+def _list_repo_files_tool(relative_dir):
+    path = _resolve_repo_path(relative_dir or ".")
+    if path is None:
+        return f"Can't list '{relative_dir}' - outside the repo or a hidden path."
+    if not os.path.isdir(path):
+        return f"No such directory: {relative_dir}"
+    try:
+        names = sorted(os.listdir(path))
+    except OSError as e:
+        return f"Couldn't list {relative_dir}: {e}"
+    names = [n for n in names if not n.startswith(".") and n != "__pycache__"]
+    return "\n".join(names) if names else "(empty)"
+
+
+def _read_recent_journal_tool(n):
+    try:
+        n = max(1, min(int(n), RECENT_ENTRIES_LIMIT))
+    except (TypeError, ValueError):
+        n = 10
+    try:
+        entries = journal.read_all()[-n:]
+    except Exception as e:
+        return f"Couldn't read the trading journal: {e}"
+    return json.dumps(entries, default=str)
+
+
+def _run_chat_tool(name, tool_input):
+    if name == "read_file":
+        return _read_repo_file_tool(tool_input.get("path", ""))
+    if name == "list_files":
+        return _list_repo_files_tool(tool_input.get("directory", ""))
+    if name == "read_recent_journal":
+        return _read_recent_journal_tool(tool_input.get("n", 10))
+    if name == "propose_code_change":
+        return "Drafted - the user will review it in the Code Mode box before anything runs."
+    return f"Unknown tool: {name}"
+
+
+CHAT_TOOLS = [
+    {"type": "web_search_20250305", "name": "web_search", "max_uses": 3},
+    {
+        "name": "read_file",
+        "description": (
+            "Read a source file from this repo (.py/.md/.yaml/.json/.txt "
+            "only) to help diagnose an issue or answer a question about how "
+            "the trading system works. Path is relative to the repo root, "
+            "e.g. 'trading/agents/decision.py'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_files",
+        "description": (
+            "List files in a directory of this repo, relative to the repo "
+            "root (e.g. 'trading/agents'). Use this to discover what exists "
+            "before reading a specific file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"directory": {"type": "string"}},
+            "required": ["directory"],
+        },
+    },
+    {
+        "name": "read_recent_journal",
+        "description": (
+            "Read the N most recent trading journal entries (signal, risk "
+            "decision, and execution result per symbol per run) - use this "
+            "to diagnose why a trade did or didn't execute."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "description": "How many recent entries to fetch (default 10, max 50)."}
+            },
+        },
+    },
+    {
+        "name": "propose_code_change",
+        "description": (
+            "Call this when fixing the user's issue genuinely requires an "
+            "actual code change to this repo. Draft a specific, actionable "
+            "instruction (as if briefing a developer) describing exactly "
+            "what to change and why - it gets pre-filled into the Code Mode "
+            "box on the page for the user to review and confirm themselves. "
+            "Do not call this for questions that don't need a code change."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instruction": {
+                    "type": "string",
+                    "description": "The exact instruction to pre-fill into Code Mode.",
+                }
+            },
+            "required": ["instruction"],
+        },
+    },
+]
+
+
 @app.route("/chat", methods=["POST"])
 def chat():
     """General-purpose Klaus chat: conversation, image attachments (vision),
-    and link reading. Separate from /ask (trading-only Q&A above) by design -
-    that endpoint and its behavior are unchanged."""
+    link reading, and read-only codebase/journal awareness via CHAT_TOOLS.
+    Separate from /ask (trading-only Q&A above) by design - that endpoint
+    and its behavior are unchanged."""
     body = request.get_json(silent=True) or {}
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
@@ -1313,19 +1488,46 @@ def chat():
 
     augmented_messages, fetched = _augment_messages_with_url(messages)
 
+    proposed_instruction = None
+    response = None
     try:
-        response = _get_client().messages.create(
-            model=CHAT_MODEL,
-            max_tokens=1024,
-            system=KLAUS_SYSTEM_PROMPT,
-            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
-            messages=augmented_messages,
-        )
+        for _ in range(CHAT_TOOL_ITERATION_LIMIT):
+            response = _get_client().messages.create(
+                model=CHAT_MODEL,
+                max_tokens=1024,
+                system=KLAUS_SYSTEM_PROMPT,
+                tools=CHAT_TOOLS,
+                messages=augmented_messages,
+            )
+
+            if response.stop_reason == "pause_turn":
+                # Server-side tool (web_search) hit its own iteration cap -
+                # resend to let the API resume where it left off.
+                augmented_messages = augmented_messages + [{"role": "assistant", "content": response.content}]
+                continue
+
+            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+            if not tool_use_blocks:
+                break
+
+            augmented_messages = augmented_messages + [{"role": "assistant", "content": response.content}]
+            tool_results = []
+            for block in tool_use_blocks:
+                if block.name == "propose_code_change":
+                    proposed_instruction = (block.input or {}).get("instruction") or proposed_instruction
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": _run_chat_tool(block.name, block.input or {}),
+                })
+            augmented_messages = augmented_messages + [{"role": "user", "content": tool_results}]
     except anthropic.APIError as e:
         return jsonify({"error": f"Claude request failed: {e}"}), 502
 
-    answer = "".join(b.text for b in response.content if b.type == "text")
-    return jsonify({"answer": answer, "fetched": fetched})
+    answer = "".join(b.text for b in response.content if b.type == "text") if response else ""
+    if not answer and proposed_instruction:
+        answer = "Drafted a code change for you to review below."
+    return jsonify({"answer": answer, "fetched": fetched, "proposed_instruction": proposed_instruction})
 
 
 @app.route("/codemode/request", methods=["POST"])
