@@ -4,6 +4,7 @@ import os
 import anthropic
 
 from .. import data_client
+from ._parsing import strip_json_fence
 
 _client = None
 
@@ -43,7 +44,7 @@ def research_sentiment(symbol, days=5, limit=10):
     )
     text = "".join(b.text for b in response.content if b.type == "text")
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_json_fence(text))
         sentiment = parsed.get("sentiment", "neutral")
         reason = parsed.get("reason", "")
     except json.JSONDecodeError:

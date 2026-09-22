@@ -3,6 +3,8 @@ import os
 
 import anthropic
 
+from ._parsing import strip_json_fence
+
 _client = None
 
 
@@ -42,7 +44,7 @@ def synthesize(symbol, price_data, fundamentals_data, sentiment_data=None):
     )
     text = "".join(b.text for b in response.content if b.type == "text")
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_json_fence(text))
     except json.JSONDecodeError:
         parsed = {"summary": text, "contradictions": [], "data_confidence": "low"}
 

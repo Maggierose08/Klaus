@@ -5,6 +5,7 @@ import anthropic
 
 from .. import config
 from ..strategy import Signal
+from ._parsing import strip_json_fence
 
 _client = None
 
@@ -40,7 +41,7 @@ def decide(synthesis_result) -> Signal:
     )
     text = "".join(b.text for b in response.content if b.type == "text")
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_json_fence(text))
     except json.JSONDecodeError:
         parsed = {
             "action": "hold", "confidence": 0.0,
