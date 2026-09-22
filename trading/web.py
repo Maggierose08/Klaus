@@ -580,7 +580,7 @@ PAGE = """<!doctype html>
 <body>
 <div class="page">
   <header class="pagehead">
-    <h1>Trading Assistant</h1>
+    <h1>Klaus Trading Dashboard</h1>
     <p class="sub">Paper account &middot; live overview &amp; assistant</p>
   </header>
 
