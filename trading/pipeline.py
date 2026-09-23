@@ -4,6 +4,7 @@ from . import executor
 from .agents.research_price import research_price
 from .agents.research_fundamentals import research_fundamentals
 from .agents.research_sentiment import research_sentiment
+from .agents.research_technical import research_technical
 from .agents.synthesis import synthesize
 from .agents.decision import decide
 
@@ -23,8 +24,11 @@ def run_trading_cycle(symbols=None):
             price_data = research_price(symbol)
             fundamentals_data = research_fundamentals(symbol)
             sentiment_data = research_sentiment(symbol) if USE_SENTIMENT_AGENT else None
+            technical_data = research_technical(symbol)
 
-            synthesis_result = synthesize(symbol, price_data, fundamentals_data, sentiment_data)
+            synthesis_result = synthesize(
+                symbol, price_data, fundamentals_data, sentiment_data, technical_data
+            )
             signal = decide(synthesis_result)
 
             execution_result = executor.execute_trade(signal)
@@ -35,6 +39,7 @@ def run_trading_cycle(symbols=None):
                     "price": price_data,
                     "fundamentals": fundamentals_data,
                     "sentiment": sentiment_data,
+                    "technical": technical_data,
                 },
                 "synthesis": synthesis_result,
                 "signal": signal.to_dict(),
