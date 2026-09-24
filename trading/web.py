@@ -225,51 +225,93 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Klaus Trading Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    color-scheme: light dark;
-    --surface:      #fcfcfb;
-    --page-plane:   #f9f9f7;
-    --ink:          #0b0b0b;
-    --ink-2:        #52514e;
-    --ink-muted:    #898781;
-    --hairline:     #e1e0d9;
-    --border:       rgba(11,11,11,0.10);
-    --good:         #0ca30c;
-    --good-text:    #006300;
-    --bad:          #d03b3b;
-    --bad-text:     #d03b3b;
-    --buy:          #2a78d6;
-    --sell:         #eb6834;
+    color-scheme: dark;
+    --surface:      rgba(255, 255, 255, 0.05);
+    --surface-2:    rgba(255, 255, 255, 0.08);
+    --page-plane:   rgba(0, 10, 25, 0.55);
+    --ink:          #eafcff;
+    --ink-2:        #9fd8e8;
+    --ink-muted:    #6d8ea3;
+    --hairline:     rgba(0, 217, 255, 0.16);
+    --border:       rgba(0, 217, 255, 0.18);
+    --good:         #00ffb0;
+    --good-text:    #3dffc2;
+    --bad:          #ff4d6d;
+    --bad-text:     #ff7a90;
+    --buy:          #00d9ff;
+    --sell:         #ff8a4d;
+    --glow:         #00d9ff;
+    --glow-2:       #4d9fff;
   }
-  @media (prefers-color-scheme: dark) {
+  @media (prefers-color-scheme: light) {
     :root {
-      --surface:      #1a1a19;
-      --page-plane:   #0d0d0d;
-      --ink:          #ffffff;
-      --ink-2:        #c3c2b7;
-      --ink-muted:    #898781;
-      --hairline:     #2c2c2a;
-      --border:       rgba(255,255,255,0.10);
-      --good:         #0ca30c;
-      --good-text:    #0ca30c;
-      --bad:          #d03b3b;
-      --bad-text:     #e66767;
-      --buy:          #3987e5;
-      --sell:         #d95926;
+      color-scheme: dark;
     }
   }
   * { box-sizing: border-box; }
   html, body { overflow-x: hidden; }
+  html {
+    background: #01040a;
+  }
   body {
     margin: 0;
     min-height: 100vh;
     display: flex;
     justify-content: center;
-    background: var(--page-plane);
+    position: relative;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% -10%, rgba(0, 217, 255, 0.12), transparent 60%),
+      linear-gradient(180deg, #050b18 0%, #030712 45%, #000103 100%);
     color: var(--ink);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
+    isolation: isolate;
+  }
+  body::before,
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  body::before {
+    background-image:
+      radial-gradient(1.5px 1.5px at 20% 30%, rgba(255,255,255,0.9), transparent),
+      radial-gradient(1px 1px at 65% 15%, rgba(0,217,255,0.9), transparent),
+      radial-gradient(1.5px 1.5px at 80% 60%, rgba(255,255,255,0.7), transparent),
+      radial-gradient(1px 1px at 40% 80%, rgba(77,159,255,0.8), transparent),
+      radial-gradient(1.5px 1.5px at 10% 65%, rgba(255,255,255,0.6), transparent),
+      radial-gradient(1px 1px at 90% 85%, rgba(0,217,255,0.7), transparent),
+      radial-gradient(1.5px 1.5px at 55% 45%, rgba(255,255,255,0.5), transparent),
+      radial-gradient(1px 1px at 30% 5%, rgba(255,255,255,0.8), transparent);
+    background-repeat: repeat;
+    background-size: 220px 220px;
+    animation: drift 90s linear infinite;
+    opacity: 0.8;
+  }
+  body::after {
+    background-image:
+      radial-gradient(1px 1px at 15% 50%, rgba(255,255,255,0.6), transparent),
+      radial-gradient(1px 1px at 75% 35%, rgba(0,217,255,0.6), transparent),
+      radial-gradient(1px 1px at 45% 90%, rgba(255,255,255,0.5), transparent),
+      radial-gradient(1px 1px at 85% 10%, rgba(77,159,255,0.6), transparent);
+    background-repeat: repeat;
+    background-size: 320px 320px;
+    animation: drift 140s linear infinite reverse, twinkle 6s ease-in-out infinite;
+  }
+  @keyframes drift {
+    from { transform: translate3d(0, 0, 0); }
+    to   { transform: translate3d(-220px, -220px, 0); }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.9; }
   }
   .page {
     width: 100%;
@@ -284,9 +326,16 @@ PAGE = """<!doctype html>
   header.pagehead { padding: 4px 4px 0; }
   h1 {
     margin: 0 0 2px;
-    font-size: 1.375rem;
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 1.75rem;
     font-weight: 700;
     letter-spacing: -0.01em;
+    background: linear-gradient(135deg, #00d9ff, #4d9fff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 30px rgba(0, 217, 255, 0.45);
+    width: fit-content;
   }
   p.sub {
     margin: 0;
@@ -295,18 +344,27 @@ PAGE = """<!doctype html>
   }
   .card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     padding: 18px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.15);
+    transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
+  }
+  .card:hover {
+    border-color: rgba(0, 217, 255, 0.3);
+    box-shadow: 0 8px 40px 0 rgba(0, 217, 255, 0.25);
   }
   h2 {
     margin: 0 0 12px;
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
     font-size: 0.95rem;
     font-weight: 700;
     color: var(--ink);
+    text-shadow: 0 0 16px rgba(0, 217, 255, 0.35);
   }
-  h2 .count { color: var(--ink-muted); font-weight: 500; }
+  h2 .count { color: var(--ink-muted); font-weight: 500; text-shadow: none; }
 
   /* KPI stat tiles */
   .kpis {
@@ -316,10 +374,18 @@ PAGE = """<!doctype html>
   }
   .kpi {
     background: var(--surface);
-    border: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     padding: 12px 10px;
     min-width: 0;
+    box-shadow: 0 8px 24px 0 rgba(0, 217, 255, 0.1);
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  .kpi:hover {
+    border-color: rgba(0, 217, 255, 0.35);
+    box-shadow: 0 8px 28px 0 rgba(0, 217, 255, 0.22);
   }
   .kpi-label {
     font-size: 0.72rem;
@@ -330,15 +396,23 @@ PAGE = """<!doctype html>
     text-overflow: ellipsis;
   }
   .kpi-value {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
     font-size: 1.15rem;
     font-weight: 700;
     line-height: 1.15;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: var(--ink);
+    text-shadow: 0 0 14px rgba(0, 217, 255, 0.4);
+    animation: pulseValue 3.2s ease-in-out infinite;
   }
-  .kpi-value.up { color: var(--good-text); }
-  .kpi-value.down { color: var(--bad-text); }
+  .kpi-value.up { color: var(--good-text); text-shadow: 0 0 14px rgba(0, 255, 176, 0.45); }
+  .kpi-value.down { color: var(--bad-text); text-shadow: 0 0 14px rgba(255, 77, 109, 0.45); }
+  @keyframes pulseValue {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.82; }
+  }
 
   /* Positions bar list */
   .barlist { display: flex; flex-direction: column; gap: 12px; }
@@ -358,16 +432,29 @@ PAGE = """<!doctype html>
   .posbar-track {
     height: 8px;
     border-radius: 4px;
-    background: var(--hairline);
+    background: rgba(255, 255, 255, 0.08);
     overflow: hidden;
   }
   .posbar-fill {
     height: 100%;
     border-radius: 4px;
     min-width: 3px;
+    background-size: 200% 100%;
+    animation: barflow 3s linear infinite;
+    transition: width 0.3s ease;
   }
-  .posbar-fill.up { background: var(--good); }
-  .posbar-fill.down { background: var(--bad); }
+  .posbar-fill.up {
+    background-image: linear-gradient(90deg, #00ffb0, #00d9ff, #00ffb0);
+    box-shadow: 0 0 12px rgba(0, 255, 176, 0.65);
+  }
+  .posbar-fill.down {
+    background-image: linear-gradient(90deg, #ff4d6d, #ff8a4d, #ff4d6d);
+    box-shadow: 0 0 12px rgba(255, 77, 109, 0.65);
+  }
+  @keyframes barflow {
+    0% { background-position: 0% 0; }
+    100% { background-position: -200% 0; }
+  }
 
   /* Recent trades list */
   .tradelist { display: flex; flex-direction: column; }
@@ -388,8 +475,8 @@ PAGE = """<!doctype html>
     flex: none;
     background: var(--ink-muted);
   }
-  .tradedot.buy { background: var(--buy); }
-  .tradedot.sell { background: var(--sell); }
+  .tradedot.buy { background: var(--buy); box-shadow: 0 0 8px rgba(0, 217, 255, 0.8); }
+  .tradedot.sell { background: var(--sell); box-shadow: 0 0 8px rgba(255, 138, 77, 0.8); }
   .tradesym { font-weight: 600; }
   .tradeaction { color: var(--ink-2); }
   .tradetime {
@@ -428,8 +515,14 @@ PAGE = """<!doctype html>
     border-radius: 10px;
     resize: vertical;
     font-family: inherit;
-    background: var(--surface);
+    background: rgba(255, 255, 255, 0.03);
     color: var(--ink);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  textarea:focus, input:focus {
+    outline: none;
+    border-color: rgba(0, 217, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.15);
   }
   button {
     margin-top: 12px;
@@ -437,12 +530,18 @@ PAGE = """<!doctype html>
     padding: 14px;
     font-size: 16px;
     font-weight: 600;
-    border: none;
+    border: 1px solid rgba(0, 217, 255, 0.4);
     border-radius: 10px;
-    background: var(--buy);
-    color: #fff;
+    background: linear-gradient(135deg, rgba(0, 217, 255, 0.9), rgba(77, 159, 255, 0.9));
+    color: #04121a;
     cursor: pointer;
+    transition: box-shadow 0.3s ease, transform 0.3s ease, filter 0.3s ease;
   }
+  button:hover:not(:disabled) {
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.6);
+    filter: brightness(1.08);
+  }
+  button:active:not(:disabled) { transform: translateY(1px); }
   button:disabled { opacity: 0.6; cursor: default; }
   @keyframes spin {
     to { transform: rotate(360deg); }
@@ -451,8 +550,8 @@ PAGE = """<!doctype html>
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(255,255,255,0.3);
-    border-top-color: #fff;
+    border: 2px solid rgba(4,18,26,0.3);
+    border-top-color: #04121a;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
     margin-right: 6px;
@@ -462,7 +561,9 @@ PAGE = """<!doctype html>
     margin-top: 16px;
     padding: 14px;
     border-radius: 10px;
-    background: var(--page-plane);
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--hairline);
     white-space: pre-wrap;
     line-height: 1.5;
@@ -490,19 +591,25 @@ PAGE = """<!doctype html>
     line-height: 1.45;
     white-space: pre-wrap;
     word-wrap: break-word;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: box-shadow 0.3s ease;
   }
   .bubble.user {
     align-self: flex-end;
-    background: var(--buy);
-    color: #fff;
+    background: linear-gradient(135deg, rgba(0, 217, 255, 0.35), rgba(77, 159, 255, 0.35));
+    border: 1px solid rgba(0, 217, 255, 0.4);
+    color: #eafcff;
     border-bottom-right-radius: 4px;
+    box-shadow: 0 4px 20px rgba(0, 217, 255, 0.25);
   }
   .bubble.assistant {
     align-self: flex-start;
-    background: var(--page-plane);
-    border: 1px solid var(--hairline);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--ink);
     border-bottom-left-radius: 4px;
+    box-shadow: 0 4px 20px rgba(77, 159, 255, 0.12);
   }
   .bubble.thinking { color: var(--ink-muted); font-style: italic; }
   .bubble.error { color: var(--bad-text); }
