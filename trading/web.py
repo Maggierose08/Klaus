@@ -231,8 +231,8 @@ PAGE = """<!doctype html>
 <style>
   :root {
     color-scheme: dark;
-    --surface:      rgba(255, 255, 255, 0.05);
-    --surface-2:    rgba(255, 255, 255, 0.08);
+    --surface:      rgba(255, 255, 255, 0.1);
+    --surface-2:    rgba(0, 217, 255, 0.08);
     --page-plane:   rgba(0, 10, 25, 0.55);
     --ink:          #eafcff;
     --ink-2:        #9fd8e8;
@@ -265,8 +265,10 @@ PAGE = """<!doctype html>
     justify-content: center;
     position: relative;
     background:
+      radial-gradient(circle at 20% 50%, rgba(0, 217, 255, 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(77, 159, 255, 0.1) 0%, transparent 50%),
       radial-gradient(ellipse 120% 80% at 50% -10%, rgba(0, 217, 255, 0.12), transparent 60%),
-      linear-gradient(180deg, #050b18 0%, #030712 45%, #000103 100%);
+      linear-gradient(180deg, #0a1628 0%, #000000 100%);
     color: var(--ink);
     font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -282,25 +284,25 @@ PAGE = """<!doctype html>
   }
   body::before {
     background-image:
-      radial-gradient(1.5px 1.5px at 20% 30%, rgba(255,255,255,0.9), transparent),
-      radial-gradient(1px 1px at 65% 15%, rgba(0,217,255,0.9), transparent),
-      radial-gradient(1.5px 1.5px at 80% 60%, rgba(255,255,255,0.7), transparent),
-      radial-gradient(1px 1px at 40% 80%, rgba(77,159,255,0.8), transparent),
-      radial-gradient(1.5px 1.5px at 10% 65%, rgba(255,255,255,0.6), transparent),
-      radial-gradient(1px 1px at 90% 85%, rgba(0,217,255,0.7), transparent),
-      radial-gradient(1.5px 1.5px at 55% 45%, rgba(255,255,255,0.5), transparent),
-      radial-gradient(1px 1px at 30% 5%, rgba(255,255,255,0.8), transparent);
+      radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,1), transparent),
+      radial-gradient(1.5px 1.5px at 65% 15%, rgba(0,217,255,1), transparent),
+      radial-gradient(2px 2px at 80% 60%, rgba(255,255,255,0.85), transparent),
+      radial-gradient(1.5px 1.5px at 40% 80%, rgba(77,159,255,0.95), transparent),
+      radial-gradient(2px 2px at 10% 65%, rgba(255,255,255,0.75), transparent),
+      radial-gradient(1.5px 1.5px at 90% 85%, rgba(0,217,255,0.85), transparent),
+      radial-gradient(2px 2px at 55% 45%, rgba(255,255,255,0.65), transparent),
+      radial-gradient(1.5px 1.5px at 30% 5%, rgba(255,255,255,0.95), transparent);
     background-repeat: repeat;
     background-size: 220px 220px;
     animation: drift 90s linear infinite;
-    opacity: 0.8;
+    opacity: 0.9;
   }
   body::after {
     background-image:
-      radial-gradient(1px 1px at 15% 50%, rgba(255,255,255,0.6), transparent),
-      radial-gradient(1px 1px at 75% 35%, rgba(0,217,255,0.6), transparent),
-      radial-gradient(1px 1px at 45% 90%, rgba(255,255,255,0.5), transparent),
-      radial-gradient(1px 1px at 85% 10%, rgba(77,159,255,0.6), transparent);
+      radial-gradient(1.5px 1.5px at 15% 50%, rgba(255,255,255,0.75), transparent),
+      radial-gradient(1.5px 1.5px at 75% 35%, rgba(0,217,255,0.75), transparent),
+      radial-gradient(1.5px 1.5px at 45% 90%, rgba(255,255,255,0.65), transparent),
+      radial-gradient(1.5px 1.5px at 85% 10%, rgba(77,159,255,0.75), transparent);
     background-repeat: repeat;
     background-size: 320px 320px;
     animation: drift 140s linear infinite reverse, twinkle 6s ease-in-out infinite;
@@ -344,17 +346,21 @@ PAGE = """<!doctype html>
   }
   .card {
     background: var(--surface);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 16px;
     padding: 18px;
-    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.15);
+    box-shadow:
+      0 8px 32px 0 rgba(0, 217, 255, 0.2),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
     transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
   }
   .card:hover {
     border-color: rgba(0, 217, 255, 0.3);
-    box-shadow: 0 8px 40px 0 rgba(0, 217, 255, 0.25);
+    box-shadow:
+      0 8px 40px 0 rgba(0, 217, 255, 0.3),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
   }
   h2 {
     margin: 0 0 12px;
@@ -374,18 +380,22 @@ PAGE = """<!doctype html>
   }
   .kpi {
     background: var(--surface);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 14px;
     padding: 12px 10px;
     min-width: 0;
-    box-shadow: 0 8px 24px 0 rgba(0, 217, 255, 0.1);
+    box-shadow:
+      0 8px 24px 0 rgba(0, 217, 255, 0.15),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
     transition: box-shadow 0.3s ease, border-color 0.3s ease;
   }
   .kpi:hover {
     border-color: rgba(0, 217, 255, 0.35);
-    box-shadow: 0 8px 28px 0 rgba(0, 217, 255, 0.22);
+    box-shadow:
+      0 8px 28px 0 rgba(0, 217, 255, 0.28),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
   }
   .kpi-label {
     font-size: 0.72rem;
@@ -561,10 +571,13 @@ PAGE = """<!doctype html>
     margin-top: 16px;
     padding: 14px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid var(--hairline);
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow:
+      0 8px 32px 0 rgba(0, 217, 255, 0.2),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
     white-space: pre-wrap;
     line-height: 1.5;
     font-size: 0.94rem;
@@ -605,11 +618,13 @@ PAGE = """<!doctype html>
   }
   .bubble.assistant {
     align-self: flex-start;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     color: var(--ink);
     border-bottom-left-radius: 4px;
-    box-shadow: 0 4px 20px rgba(77, 159, 255, 0.12);
+    box-shadow:
+      0 4px 20px rgba(77, 159, 255, 0.18),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
   }
   .bubble.thinking { color: var(--ink-muted); font-style: italic; }
   .bubble.error { color: var(--bad-text); }
