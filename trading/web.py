@@ -231,14 +231,14 @@ PAGE = """<!doctype html>
 <style>
   :root {
     color-scheme: dark;
-    --surface:      rgba(255, 255, 255, 0.1);
+    --surface:      rgba(255, 255, 255, 0.05);
     --surface-2:    rgba(0, 217, 255, 0.08);
     --page-plane:   rgba(0, 10, 25, 0.55);
     --ink:          #eafcff;
     --ink-2:        #9fd8e8;
     --ink-muted:    #6d8ea3;
     --hairline:     rgba(0, 217, 255, 0.16);
-    --border:       rgba(0, 217, 255, 0.18);
+    --border:       rgba(255, 255, 255, 0.12);
     --good:         #00ffb0;
     --good-text:    #3dffc2;
     --bad:          #ff4d6d;
@@ -346,21 +346,17 @@ PAGE = """<!doctype html>
   }
   .card {
     background: var(--surface);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(20px) saturate(130%);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    border: 1px solid var(--border);
     border-radius: 16px;
     padding: 18px;
-    box-shadow:
-      0 8px 32px 0 rgba(0, 217, 255, 0.2),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.08);
     transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
   }
   .card:hover {
-    border-color: rgba(0, 217, 255, 0.3);
-    box-shadow:
-      0 8px 40px 0 rgba(0, 217, 255, 0.3),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
+    border-color: rgba(0, 217, 255, 0.22);
+    box-shadow: 0 8px 40px 0 rgba(0, 217, 255, 0.15);
   }
   h2 {
     margin: 0 0 12px;
@@ -380,22 +376,18 @@ PAGE = """<!doctype html>
   }
   .kpi {
     background: var(--surface);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(20px) saturate(130%);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    border: 1px solid var(--border);
     border-radius: 14px;
     padding: 12px 10px;
     min-width: 0;
-    box-shadow:
-      0 8px 24px 0 rgba(0, 217, 255, 0.15),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 24px 0 rgba(0, 217, 255, 0.06);
     transition: box-shadow 0.3s ease, border-color 0.3s ease;
   }
   .kpi:hover {
-    border-color: rgba(0, 217, 255, 0.35);
-    box-shadow:
-      0 8px 28px 0 rgba(0, 217, 255, 0.28),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
+    border-color: rgba(0, 217, 255, 0.25);
+    box-shadow: 0 8px 28px 0 rgba(0, 217, 255, 0.15);
   }
   .kpi-label {
     font-size: 0.72rem;
@@ -542,7 +534,7 @@ PAGE = """<!doctype html>
     font-weight: 600;
     border: 1px solid rgba(0, 217, 255, 0.4);
     border-radius: 10px;
-    background: linear-gradient(135deg, rgba(0, 217, 255, 0.9), rgba(77, 159, 255, 0.9));
+    background: linear-gradient(135deg, rgba(0, 217, 255, 0.75), rgba(77, 159, 255, 0.75));
     color: #04121a;
     cursor: pointer;
     transition: box-shadow 0.3s ease, transform 0.3s ease, filter 0.3s ease;
@@ -571,13 +563,11 @@ PAGE = """<!doctype html>
     margin-top: 16px;
     padding: 14px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow:
-      0 8px 32px 0 rgba(0, 217, 255, 0.2),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(20px) saturate(130%);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.08);
     white-space: pre-wrap;
     line-height: 1.5;
     font-size: 0.94rem;
@@ -610,21 +600,19 @@ PAGE = """<!doctype html>
   }
   .bubble.user {
     align-self: flex-end;
-    background: linear-gradient(135deg, rgba(0, 217, 255, 0.35), rgba(77, 159, 255, 0.35));
-    border: 1px solid rgba(0, 217, 255, 0.4);
+    background: rgba(0, 217, 255, 0.15);
+    border: 1px solid rgba(0, 217, 255, 0.3);
     color: #eafcff;
     border-bottom-right-radius: 4px;
-    box-shadow: 0 4px 20px rgba(0, 217, 255, 0.25);
+    box-shadow: 0 4px 20px rgba(0, 217, 255, 0.1);
   }
   .bubble.assistant {
     align-self: flex-start;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
     color: var(--ink);
     border-bottom-left-radius: 4px;
-    box-shadow:
-      0 4px 20px rgba(77, 159, 255, 0.18),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 20px rgba(77, 159, 255, 0.08);
   }
   .bubble.thinking { color: var(--ink-muted); font-style: italic; }
   .bubble.error { color: var(--bad-text); }
