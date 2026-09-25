@@ -16,6 +16,8 @@ from . import data_client
 from . import journal
 from . import memory
 
+# Force Cloud Run rebuild - 2026-09-25
+
 app = Flask(__name__)
 # Bounds request size (mainly for /chat image uploads) so a huge upload
 # doesn't tie up the container; 413s are turned into JSON below.
