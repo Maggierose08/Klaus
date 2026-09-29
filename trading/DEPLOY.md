@@ -311,6 +311,34 @@ wait for the diff, check your email for the 4-digit code, enter it with
 "run it". The merge push to `main` fires the existing `trading-web-deploy`
 trigger from step 2, same as any other push.
 
+## 7. The Shy Fly book agent
+
+A completely separate feature at `/shyfly` (see `trading/shyfly.py`) -
+drafts children's-book text via Claude and generates illustrations via the
+Gemini API. Needs one new secret:
+
+```sh
+echo -n "PASTE_YOUR_GEMINI_KEY" | gcloud secrets create GEMINI_API_KEY --data-file=-
+gcloud secrets add-iam-policy-binding GEMINI_API_KEY \
+  --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor
+gcloud run services update trading-web --region $REGION \
+  --update-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest
+```
+
+**Image generation requires billing enabled on the Gemini key's Google
+Cloud/AI Studio project** — the Gemini API's free tier has zero quota for
+every image-generation model (confirmed directly: every image model
+returns `429 RESOURCE_EXHAUSTED` with `limit: 0` on a billing-less key, not
+a rate limit you can retry past). Text-only Gemini calls aren't used here,
+so this affects the whole feature. Story drafts and character bible
+generation itself run fine either way; only the actual illustration step
+needs billing.
+
+Character reference images and generated book illustrations live in the
+same GCS bucket under `shyfly/images/...`, served back to the browser via
+`/shyfly/image/<path>` (path-restricted to that prefix only — see the
+route's docstring in `web.py`).
+
 ## Notes
 
 - `WATCHLIST`, `MAX_POSITION_NOTIONAL_USD`, etc. in `trading/config.py`

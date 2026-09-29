@@ -15,6 +15,8 @@ from . import config
 from . import data_client
 from . import journal
 from . import memory
+from . import shyfly
+from . import storage
 
 # Force Cloud Run rebuild - 2026-09-25
 
@@ -737,6 +739,7 @@ PAGE = """<!doctype html>
   <header class="pagehead">
     <h1>Klaus Trading Dashboard</h1>
     <p class="sub">Paper account &middot; live overview &amp; assistant</p>
+    <p class="sub" style="margin-top:6px"><a href="/shyfly" style="color:inherit">&#128027; The Shy Fly book series &rarr;</a></p>
   </header>
 
   <div class="kpis" id="kpis">
@@ -1781,6 +1784,415 @@ def codemode_log():
 def codemode_undo():
     ok, message, _entry = codemode.undo_last_merge()
     return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
+
+
+SHYFLY_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>The Shy Fly</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --surface:      rgba(255, 255, 255, 0.05);
+    --page-plane:   rgba(0, 10, 25, 0.55);
+    --ink:          #eafcff;
+    --ink-2:        #9fd8e8;
+    --ink-muted:    #6d8ea3;
+    --hairline:     rgba(0, 217, 255, 0.16);
+    --border:       rgba(255, 255, 255, 0.12);
+    --good-text:    #3dffc2;
+    --bad-text:     #ff7a90;
+    --buy:          #00d9ff;
+  }
+  * { box-sizing: border-box; }
+  html { background: #01040a; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    background: linear-gradient(180deg, #0a1628 0%, #000000 100%);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .page {
+    width: 100%;
+    max-width: 640px;
+    min-width: 0;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  header.pagehead { padding: 4px 4px 0; display: flex; justify-content: space-between; align-items: baseline; }
+  h1 { margin: 0 0 2px; font-size: 1.375rem; font-weight: 700; }
+  a.backlink { color: var(--ink-2); font-size: 0.85rem; text-decoration: none; }
+  p.sub { margin: 0; color: var(--ink-2); font-size: 0.9rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px;
+    backdrop-filter: blur(20px);
+  }
+  h2 { margin: 0 0 12px; font-size: 0.95rem; font-weight: 700; }
+  label { display: block; font-size: 0.82rem; color: var(--ink-2); margin: 10px 0 4px; }
+  input, textarea {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 16px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    background: rgba(0,0,0,0.3);
+    color: var(--ink);
+    font-family: inherit;
+  }
+  textarea { min-height: 100px; resize: vertical; }
+  button {
+    margin-top: 14px;
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    background: var(--buy);
+    color: #001018;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary { background: rgba(255,255,255,0.1); color: var(--ink); }
+  .status { margin-top: 12px; font-size: 0.88rem; color: var(--ink-2); white-space: pre-wrap; }
+  .status.error { color: var(--bad-text); }
+  .book-list { display: flex; flex-direction: column; gap: 10px; }
+  .book-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px; border: 1px solid var(--hairline); border-radius: 10px;
+    background: rgba(0,0,0,0.2); cursor: pointer;
+  }
+  .badge { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; font-weight: 600; }
+  .badge.draft { background: rgba(255,255,255,0.12); color: var(--ink-2); }
+  .badge.approved { background: rgba(61,255,194,0.15); color: var(--good-text); }
+  .empty { color: var(--ink-muted); font-size: 0.88rem; }
+  .char-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
+  .char-card { flex: none; width: 120px; text-align: center; }
+  .char-card img { width: 120px; height: 120px; object-fit: cover; border-radius: 12px; border: 1px solid var(--hairline); }
+  .char-card .name { font-size: 0.78rem; margin-top: 6px; color: var(--ink-2); }
+  .book-detail-page { border-top: 1px solid var(--hairline); padding-top: 16px; margin-top: 16px; }
+  .book-detail-page:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .book-detail-page img { width: 100%; border-radius: 12px; border: 1px solid var(--hairline); margin-bottom: 10px; }
+  .book-detail-page .page-num { font-size: 0.72rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .book-detail-page .page-text { font-size: 1rem; line-height: 1.5; margin: 4px 0 8px; }
+  .book-detail-page .illustration-note { font-size: 0.78rem; color: var(--ink-muted); font-style: italic; }
+  .image-error { color: var(--bad-text); font-size: 0.82rem; padding: 20px; border: 1px dashed var(--bad-text); border-radius: 10px; text-align: center; margin-bottom: 10px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="pagehead">
+    <div>
+      <h1>The Shy Fly</h1>
+      <p class="sub">Book series drafting &middot; review before publishing</p>
+    </div>
+    <a class="backlink" href="/">&larr; Trading dashboard</a>
+  </header>
+
+  <div class="card" id="charactersCard">
+    <h2>Characters</h2>
+    <div id="charList" class="char-row"><span class="empty">No characters established yet - they're created from Book 1's theme.</span></div>
+  </div>
+
+  <div class="card">
+    <h2>New book</h2>
+    <label for="bookNumber">Book number</label>
+    <input type="number" id="bookNumber" min="1" step="1">
+    <label for="bookTheme">Theme / plot</label>
+    <textarea id="bookTheme" placeholder="Describe this book's plot..."></textarea>
+    <button id="generateBtn">Generate draft</button>
+    <div id="generateStatus" class="status hidden"></div>
+  </div>
+
+  <div class="card" id="listCard">
+    <h2>Books</h2>
+    <div id="bookList" class="book-list"><span class="empty">Loading&hellip;</span></div>
+  </div>
+
+  <div class="card hidden" id="detailCard">
+    <h2 id="detailTitle"></h2>
+    <div id="detailMeta" class="sub" style="margin-bottom:14px"></div>
+    <div id="detailPages"></div>
+    <button id="approveBtn" class="hidden">Approve this book</button>
+    <button id="closeDetailBtn" class="secondary">Back to list</button>
+  </div>
+</div>
+<script>
+  const bookNumberEl = document.getElementById('bookNumber');
+  const bookThemeEl = document.getElementById('bookTheme');
+  const generateBtnEl = document.getElementById('generateBtn');
+  const generateStatusEl = document.getElementById('generateStatus');
+  const charListEl = document.getElementById('charList');
+  const bookListEl = document.getElementById('bookList');
+  const listCardEl = document.getElementById('listCard');
+  const detailCardEl = document.getElementById('detailCard');
+  const detailTitleEl = document.getElementById('detailTitle');
+  const detailMetaEl = document.getElementById('detailMeta');
+  const detailPagesEl = document.getElementById('detailPages');
+  const approveBtnEl = document.getElementById('approveBtn');
+  const closeDetailBtnEl = document.getElementById('closeDetailBtn');
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
+      d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  async function loadCharacters() {
+    try {
+      const res = await fetch('/shyfly/characters');
+      const data = await res.json();
+      const chars = data.characters || [];
+      if (!chars.length) return;
+      charListEl.innerHTML = '';
+      for (const c of chars) {
+        const card = document.createElement('div');
+        card.className = 'char-card';
+        const img = document.createElement('img');
+        img.src = '/shyfly/image/' + c.reference_image_blob;
+        img.alt = c.name;
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = c.name;
+        card.appendChild(img);
+        card.appendChild(name);
+        charListEl.appendChild(card);
+      }
+    } catch (err) {
+      // leave the default "not established yet" message in place
+    }
+  }
+
+  async function loadBooks() {
+    try {
+      const res = await fetch('/shyfly/books');
+      const data = await res.json();
+      const books = data.books || [];
+      bookNumberEl.value = books.length ? Math.max(...books.map(b => b.book_number)) + 1 : 1;
+      if (!books.length) {
+        bookListEl.innerHTML = '<span class="empty">No books yet - generate Book 1 above.</span>';
+        return;
+      }
+      bookListEl.innerHTML = '';
+      for (const b of books.slice().reverse()) {
+        const row = document.createElement('div');
+        row.className = 'book-row';
+        row.addEventListener('click', () => openBook(b.book_number));
+        const left = document.createElement('div');
+        const titleLine = document.createElement('div');
+        const titleStrong = document.createElement('strong');
+        titleStrong.textContent = 'Book ' + b.book_number + ':';
+        titleLine.appendChild(titleStrong);
+        titleLine.appendChild(document.createTextNode(' ' + b.title));
+        const metaLine = document.createElement('div');
+        metaLine.className = 'sub';
+        metaLine.style.marginTop = '2px';
+        metaLine.textContent = b.page_count + ' pages · ' + fmtTime(b.created_at);
+        left.appendChild(titleLine);
+        left.appendChild(metaLine);
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + b.status;
+        badge.textContent = b.status;
+        row.appendChild(left);
+        row.appendChild(badge);
+        bookListEl.appendChild(row);
+      }
+    } catch (err) {
+      bookListEl.innerHTML = '<span class="empty">Could not load books.</span>';
+    }
+  }
+
+  async function openBook(bookNumber) {
+    const res = await fetch('/shyfly/books/' + bookNumber);
+    const book = await res.json();
+    if (!res.ok) { alert(book.error || 'Could not load that book.'); return; }
+
+    detailTitleEl.textContent = 'Book ' + book.book_number + ': ' + book.title;
+    detailMetaEl.textContent = book.status + ' · ' + fmtTime(book.created_at);
+    detailPagesEl.innerHTML = '';
+    for (const p of book.pages) {
+      const div = document.createElement('div');
+      div.className = 'book-detail-page';
+      if (p.image_blob) {
+        const img = document.createElement('img');
+        img.src = '/shyfly/image/' + p.image_blob;
+        img.alt = 'Page ' + p.page_number + ' illustration';
+        div.appendChild(img);
+      } else if (p.image_error) {
+        const errDiv = document.createElement('div');
+        errDiv.className = 'image-error';
+        errDiv.textContent = 'Illustration failed: ' + p.image_error;
+        div.appendChild(errDiv);
+      }
+      const num = document.createElement('div');
+      num.className = 'page-num';
+      num.textContent = 'Page ' + p.page_number;
+      const text = document.createElement('div');
+      text.className = 'page-text';
+      text.textContent = p.text;
+      const note = document.createElement('div');
+      note.className = 'illustration-note';
+      note.textContent = p.illustration_description;
+      div.appendChild(num);
+      div.appendChild(text);
+      div.appendChild(note);
+      detailPagesEl.appendChild(div);
+    }
+
+    if (book.status === 'draft') {
+      approveBtnEl.classList.remove('hidden');
+      approveBtnEl.onclick = async () => {
+        approveBtnEl.disabled = true;
+        const r = await fetch('/shyfly/books/' + bookNumber + '/approve', { method: 'POST' });
+        const d = await r.json();
+        alert(d.message || (d.ok ? 'Approved.' : 'Could not approve.'));
+        if (d.ok) { closeDetail(); loadBooks(); }
+        approveBtnEl.disabled = false;
+      };
+    } else {
+      approveBtnEl.classList.add('hidden');
+    }
+
+    listCardEl.classList.add('hidden');
+    document.getElementById('generateBtn').closest('.card').classList.add('hidden');
+    charListEl.closest('.card').classList.add('hidden');
+    detailCardEl.classList.remove('hidden');
+  }
+
+  function closeDetail() {
+    detailCardEl.classList.add('hidden');
+    listCardEl.classList.remove('hidden');
+    document.getElementById('generateBtn').closest('.card').classList.remove('hidden');
+    charListEl.closest('.card').classList.remove('hidden');
+  }
+  closeDetailBtnEl.addEventListener('click', closeDetail);
+
+  generateBtnEl.addEventListener('click', async () => {
+    const book_number = parseInt(bookNumberEl.value, 10);
+    const theme = bookThemeEl.value.trim();
+    if (!book_number || !theme) return;
+
+    generateBtnEl.disabled = true;
+    generateStatusEl.classList.remove('hidden', 'error');
+    generateStatusEl.textContent = 'Drafting the story and generating illustrations - this can take a minute or two...';
+
+    try {
+      const res = await fetch('/shyfly/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book_number, theme }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+      generateStatusEl.textContent = 'Draft ready - review it in the list below.';
+      bookThemeEl.value = '';
+      await loadCharacters();
+      await loadBooks();
+      openBook(book_number);
+    } catch (err) {
+      generateStatusEl.classList.add('error');
+      generateStatusEl.textContent = err.message || 'Something went wrong.';
+    } finally {
+      generateBtnEl.disabled = false;
+    }
+  });
+
+  loadCharacters();
+  loadBooks();
+</script>
+</body>
+</html>
+"""
+
+
+# --- The Shy Fly children's book agent ---
+# Fully separate feature from the trading dashboard: own page, own storage
+# namespace (shyfly/... in the same GCS bucket), own generation pipeline
+# (trading/shyfly.py). Nothing here is ever auto-published - every book is
+# a "draft" until explicitly approved on the page.
+
+_SHYFLY_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+@app.route("/shyfly")
+def shyfly_page():
+    return render_template_string(SHYFLY_PAGE)
+
+
+@app.route("/shyfly/characters")
+def shyfly_characters():
+    return jsonify({"characters": list(shyfly.get_character_bible().values())})
+
+
+@app.route("/shyfly/books")
+def shyfly_books():
+    return jsonify({"books": shyfly.list_books()})
+
+
+@app.route("/shyfly/books/<int:book_number>")
+def shyfly_book_detail(book_number):
+    book = shyfly.read_book(book_number)
+    if book is None:
+        return jsonify({"error": "No such book."}), 404
+    return jsonify(book)
+
+
+@app.route("/shyfly/generate", methods=["POST"])
+def shyfly_generate():
+    body = request.get_json(silent=True) or {}
+    book_number = body.get("book_number")
+    theme = (body.get("theme") or "").strip()
+    if not isinstance(book_number, int) or book_number < 1:
+        return jsonify({"error": "book_number must be a positive integer."}), 400
+    if not theme:
+        return jsonify({"error": "Give it a theme/plot to work from first."}), 400
+    if shyfly.read_book(book_number) is not None:
+        return jsonify({"error": f"Book {book_number} already exists."}), 409
+
+    try:
+        book = shyfly.generate_book(book_number, theme)
+    except anthropic.APIError as e:
+        return jsonify({"error": f"Story generation failed: {e}"}), 502
+    except Exception as e:
+        return jsonify({"error": f"Couldn't generate that book: {e}"}), 502
+    return jsonify(book)
+
+
+@app.route("/shyfly/books/<int:book_number>/approve", methods=["POST"])
+def shyfly_approve(book_number):
+    ok, message = shyfly.approve_book(book_number)
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
+
+
+@app.route("/shyfly/image/<path:relative_path>")
+def shyfly_image(relative_path):
+    """Serves a generated illustration/character-reference image from GCS.
+    Deliberately restricted to the shyfly/ namespace with an image
+    extension allowlist - this must never become a general-purpose blob
+    reader for the rest of the bucket (journal.json, codemode state, etc.)."""
+    if not relative_path.startswith("shyfly/"):
+        return jsonify({"error": "Not found."}), 404
+    if os.path.splitext(relative_path)[1].lower() not in _SHYFLY_IMAGE_EXTENSIONS:
+        return jsonify({"error": "Not found."}), 404
+    data = storage.read_bytes(relative_path)
+    if data is None:
+        return jsonify({"error": "Not found."}), 404
+    ext = os.path.splitext(relative_path)[1].lower()
+    mime_type = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}[ext.lstrip(".")]
+    return Response(data, mimetype=mime_type)
 
 
 if __name__ == "__main__":
