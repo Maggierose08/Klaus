@@ -223,45 +223,161 @@ def _augment_messages_with_url(messages):
 def _request_too_large(e):
     return jsonify({"error": "That's too big to send (max ~12MB)."}), 413
 
-PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Klaus Trading Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
+
+# --- Shared "Ember Glass" sidebar nav, reused by every page. Built once
+# per page via plain string .replace() (not Jinja/f-string) so the giant
+# CSS/JS blobs below never risk brace-escaping conflicts. ---
+
+NAV_ITEMS = [
+    ("/", "Home", "home", "&#8962;"),
+    ("/trading", "Trading", "trading", "&#128200;"),
+    ("/shyfly", "Shy Fly Books", "shyfly", "&#128027;"),
+    ("/assistant", "Chat &amp; Code Mode", "assistant", "&#128172;"),
+    ("/agents/new", "Add Agent", "agents", "&#10133;"),
+]
+
+NAV_CSS = """
+  .nav-toggle {
+    position: fixed;
+    top: max(14px, env(safe-area-inset-top));
+    left: 14px;
+    z-index: 50;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-top-color: var(--border-top);
+    background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04));
+    color: var(--ink);
+    font-size: 1.3rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin: 0;
+    padding: 0;
+    box-shadow: 0 4px 16px rgba(10,4,0,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  .nav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .nav-overlay.open { opacity: 1; pointer-events: auto; }
+  .side-nav {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 250px;
+    max-width: 80vw;
+    background: linear-gradient(160deg, rgba(40,18,6,0.97), rgba(10,4,0,0.99));
+    border-right: 1px solid var(--border);
+    z-index: 45;
+    padding: max(70px, calc(env(safe-area-inset-top) + 60px)) 14px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    overflow-y: auto;
+  }
+  .side-nav.open { transform: translateX(0); }
+  .nav-brand {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 1.1rem;
+    background: linear-gradient(135deg, #ffd9a8, #ff8c42);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    padding: 0 10px 16px;
+  }
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 10px;
+    border-radius: 10px;
+    color: var(--ink-2);
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  .nav-link:hover { background: rgba(255,255,255,0.06); color: var(--ink); }
+  .nav-link.active {
+    background: linear-gradient(135deg, rgba(255,179,102,0.22), rgba(255,140,66,0.1));
+    color: #ffd9a8;
+    border: 1px solid rgba(255,179,102,0.3);
+  }
+  .nav-icon { font-size: 1.1rem; width: 22px; text-align: center; flex: none; }
+"""
+
+
+def _nav_html(active):
+    links = "\n".join(
+        '<a href="{href}" class="nav-link{cls}"><span class="nav-icon">{icon}</span>{label}</a>'.format(
+            href=href, cls=(" active" if key == active else ""), icon=icon, label=label,
+        )
+        for href, label, key, icon in NAV_ITEMS
+    )
+    return """
+<button id="navToggle" class="nav-toggle" aria-label="Open menu">&#9776;</button>
+<div id="navOverlay" class="nav-overlay"></div>
+<nav id="sideNav" class="side-nav">
+  <div class="nav-brand">Klaus</div>
+""" + links + """
+</nav>
+<script>
+  (function() {
+    var toggle = document.getElementById('navToggle');
+    var overlay = document.getElementById('navOverlay');
+    var nav = document.getElementById('sideNav');
+    function openNav() { nav.classList.add('open'); overlay.classList.add('open'); }
+    function closeNav() { nav.classList.remove('open'); overlay.classList.remove('open'); }
+    toggle.addEventListener('click', openNav);
+    overlay.addEventListener('click', closeNav);
+  })();
+</script>
+"""
+
+
+# Shared "Ember Glass" theme primitives (root vars, background/particles,
+# page container, card/button/input styling) - reused verbatim by every
+# page built after this one (Assistant, Home, Add Agent, Shy Fly). PAGE
+# below predates this extraction and keeps its own copy inline rather than
+# being retrofitted to reference it, to avoid re-touching already-verified
+# CSS during this rebuild.
+BASE_CSS = """
   :root {
     color-scheme: dark;
     --surface:      rgba(255, 255, 255, 0.05);
-    --surface-2:    rgba(0, 217, 255, 0.08);
-    --page-plane:   rgba(0, 10, 25, 0.55);
-    --ink:          #eafcff;
-    --ink-2:        #9fd8e8;
-    --ink-muted:    #6d8ea3;
-    --hairline:     rgba(0, 217, 255, 0.16);
-    --border:       rgba(255, 255, 255, 0.12);
-    --good:         #00ffb0;
-    --good-text:    #3dffc2;
-    --bad:          #ff4d6d;
-    --bad-text:     #ff7a90;
-    --buy:          #00d9ff;
-    --sell:         #ff8a4d;
-    --glow:         #00d9ff;
-    --glow-2:       #4d9fff;
+    --surface-2:    rgba(255, 140, 66, 0.08);
+    --page-plane:   rgba(20, 8, 2, 0.55);
+    --ink:          #ffffff;
+    --ink-2:        rgba(255, 255, 255, 0.72);
+    --ink-muted:    rgba(255, 255, 255, 0.45);
+    --hairline:     rgba(255, 179, 102, 0.18);
+    --border:       rgba(255, 255, 255, 0.14);
+    --border-top:   rgba(255, 255, 255, 0.38);
+    --good:         #5dffa8;
+    --good-text:    #5dffa8;
+    --bad:          #ff5d6c;
+    --bad-text:     #ff7a86;
+    --buy:          #ffb366;
+    --sell:         #ff8c42;
+    --glow:         #ffb366;
+    --glow-2:       #ff8c42;
   }
   @media (prefers-color-scheme: light) {
-    :root {
-      color-scheme: dark;
-    }
+    :root { color-scheme: dark; }
   }
   * { box-sizing: border-box; }
   html, body { overflow-x: hidden; }
-  html {
-    background: #01040a;
-  }
+  html { background: #01040a; }
   body {
     margin: 0;
     min-height: 100vh;
@@ -269,17 +385,16 @@ PAGE = """<!doctype html>
     justify-content: center;
     position: relative;
     background:
-      radial-gradient(circle at 20% 50%, rgba(0, 217, 255, 0.1) 0%, transparent 50%),
-      radial-gradient(circle at 80% 80%, rgba(77, 159, 255, 0.1) 0%, transparent 50%),
-      radial-gradient(ellipse 120% 80% at 50% -10%, rgba(0, 217, 255, 0.12), transparent 60%),
-      linear-gradient(180deg, #0a1628 0%, #000000 100%);
+      radial-gradient(circle at 50% 25%, rgba(255, 140, 66, 0.22) 0%, transparent 55%),
+      radial-gradient(circle at 15% 75%, rgba(255, 90, 30, 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse 130% 80% at 50% 100%, rgba(255, 100, 30, 0.1), transparent 65%),
+      radial-gradient(circle at 50% 40%, #3a1c0a 0%, #1a0c05 45%, #0a0503 75%, #000000 100%);
     color: var(--ink);
     font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     isolation: isolate;
   }
-  body::before,
-  body::after {
+  body::before, body::after {
     content: "";
     position: fixed;
     inset: 0;
@@ -288,36 +403,36 @@ PAGE = """<!doctype html>
   }
   body::before {
     background-image:
-      radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,1), transparent),
-      radial-gradient(1.5px 1.5px at 65% 15%, rgba(0,217,255,1), transparent),
-      radial-gradient(2px 2px at 80% 60%, rgba(255,255,255,0.85), transparent),
-      radial-gradient(1.5px 1.5px at 40% 80%, rgba(77,159,255,0.95), transparent),
-      radial-gradient(2px 2px at 10% 65%, rgba(255,255,255,0.75), transparent),
-      radial-gradient(1.5px 1.5px at 90% 85%, rgba(0,217,255,0.85), transparent),
-      radial-gradient(2px 2px at 55% 45%, rgba(255,255,255,0.65), transparent),
-      radial-gradient(1.5px 1.5px at 30% 5%, rgba(255,255,255,0.95), transparent);
+      radial-gradient(3px 3px at 20% 30%, rgba(255,179,102,1), rgba(255,179,102,0) 70%),
+      radial-gradient(2px 2px at 65% 15%, rgba(255,140,66,0.95), rgba(255,140,66,0) 70%),
+      radial-gradient(4px 4px at 80% 60%, rgba(255,120,40,0.85), rgba(255,120,40,0) 70%),
+      radial-gradient(2px 2px at 40% 80%, rgba(255,179,102,0.9), rgba(255,179,102,0) 70%),
+      radial-gradient(3px 3px at 10% 65%, rgba(255,100,30,0.75), rgba(255,100,30,0) 70%),
+      radial-gradient(2px 2px at 90% 85%, rgba(255,179,102,0.8), rgba(255,179,102,0) 70%),
+      radial-gradient(3px 3px at 55% 45%, rgba(255,140,66,0.7), rgba(255,140,66,0) 70%),
+      radial-gradient(2px 2px at 30% 5%, rgba(255,179,102,0.95), rgba(255,179,102,0) 70%);
     background-repeat: repeat;
-    background-size: 220px 220px;
-    animation: drift 90s linear infinite;
-    opacity: 0.9;
+    background-size: 260px 260px;
+    animation: drift 100s linear infinite;
+    opacity: 0.85;
   }
   body::after {
     background-image:
-      radial-gradient(1.5px 1.5px at 15% 50%, rgba(255,255,255,0.75), transparent),
-      radial-gradient(1.5px 1.5px at 75% 35%, rgba(0,217,255,0.75), transparent),
-      radial-gradient(1.5px 1.5px at 45% 90%, rgba(255,255,255,0.65), transparent),
-      radial-gradient(1.5px 1.5px at 85% 10%, rgba(77,159,255,0.75), transparent);
+      radial-gradient(2px 2px at 15% 50%, rgba(255,200,140,0.8), rgba(255,200,140,0) 70%),
+      radial-gradient(2.5px 2.5px at 75% 35%, rgba(255,120,40,0.8), rgba(255,120,40,0) 70%),
+      radial-gradient(2px 2px at 45% 90%, rgba(255,179,102,0.7), rgba(255,179,102,0) 70%),
+      radial-gradient(3px 3px at 85% 10%, rgba(255,140,66,0.8), rgba(255,140,66,0) 70%);
     background-repeat: repeat;
-    background-size: 320px 320px;
-    animation: drift 140s linear infinite reverse, twinkle 6s ease-in-out infinite;
+    background-size: 340px 340px;
+    animation: drift 150s linear infinite reverse, flicker 4s ease-in-out infinite;
   }
   @keyframes drift {
     from { transform: translate3d(0, 0, 0); }
-    to   { transform: translate3d(-220px, -220px, 0); }
+    to   { transform: translate3d(-260px, -260px, 0); }
   }
-  @keyframes twinkle {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 0.9; }
+  @keyframes flicker {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.95; }
   }
   .page {
     width: 100%;
@@ -336,11 +451,247 @@ PAGE = """<!doctype html>
     font-size: 1.75rem;
     font-weight: 700;
     letter-spacing: -0.01em;
-    background: linear-gradient(135deg, #00d9ff, #4d9fff);
+    background: linear-gradient(135deg, #ffd9a8, #ff8c42);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    text-shadow: 0 0 30px rgba(0, 217, 255, 0.45);
+    text-shadow: 0 0 30px rgba(255, 179, 102, 0.45);
+    width: fit-content;
+  }
+  p.sub { margin: 0; color: var(--ink-2); font-size: 0.9rem; }
+  .card {
+    background: linear-gradient(135deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.04) 55%, rgba(255,255,255,0.015) 100%);
+    border: 1px solid var(--border);
+    border-top-color: var(--border-top);
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 8px 32px 0 rgba(10, 4, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+    transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
+  }
+  .card:hover {
+    border-color: rgba(255, 179, 102, 0.3);
+    box-shadow: 0 8px 40px 0 rgba(10, 4, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.28);
+  }
+  h2 {
+    margin: 0 0 12px;
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--ink);
+    text-shadow: 0 0 16px rgba(255, 179, 102, 0.35);
+  }
+  h2 .count { color: var(--ink-muted); font-weight: 500; text-shadow: none; }
+  .empty, .loading { color: var(--ink-muted); font-size: 0.88rem; padding: 4px 0; }
+  .dashed {
+    border: 1.5px dashed rgba(255, 179, 102, 0.35);
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+    color: var(--ink-muted);
+    font-size: 0.88rem;
+    background: transparent;
+  }
+  .dashed:hover { border-color: rgba(255, 179, 102, 0.6); color: var(--ink-2); }
+  textarea {
+    width: 100%;
+    min-height: 84px;
+    padding: 12px;
+    font-size: 16px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    resize: vertical;
+    font-family: inherit;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--ink);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  textarea:focus, input:focus {
+    outline: none;
+    border-color: rgba(255, 179, 102, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 179, 102, 0.15);
+  }
+  input {
+    padding: 10px 12px;
+    font-size: 16px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--ink);
+    font-family: inherit;
+  }
+  button {
+    margin-top: 12px;
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    border: 1px solid rgba(255, 179, 102, 0.5);
+    border-radius: 10px;
+    background: linear-gradient(135deg, #ffb366, #ff8c42);
+    color: #2a1400;
+    cursor: pointer;
+    transition: box-shadow 0.3s ease, transform 0.3s ease, filter 0.3s ease;
+  }
+  button:hover:not(:disabled) {
+    box-shadow: 0 0 20px rgba(255, 179, 102, 0.6);
+    filter: brightness(1.08);
+  }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: 0.6; cursor: default; }
+  button.secondary {
+    background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04));
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(42,20,0,0.3);
+    border-top-color: #2a1400;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .answer {
+    margin-top: 16px;
+    padding: 14px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 100%);
+    border: 1px solid var(--border);
+    border-top-color: var(--border-top);
+    box-shadow: 0 8px 32px 0 rgba(10, 4, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+    white-space: pre-wrap;
+    line-height: 1.5;
+    font-size: 0.94rem;
+    display: none;
+  }
+  .answer.error { color: var(--bad-text); }
+  .hint { margin-top: 10px; font-size: 0.78rem; color: var(--ink-muted); }
+"""
+
+
+PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Klaus Trading Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --surface:      rgba(255, 255, 255, 0.05);
+    --surface-2:    rgba(255, 140, 66, 0.08);
+    --page-plane:   rgba(20, 8, 2, 0.55);
+    --ink:          #ffffff;
+    --ink-2:        rgba(255, 255, 255, 0.72);
+    --ink-muted:    rgba(255, 255, 255, 0.45);
+    --hairline:     rgba(255, 179, 102, 0.18);
+    --border:       rgba(255, 255, 255, 0.14);
+    --border-top:   rgba(255, 255, 255, 0.38);
+    --good:         #5dffa8;
+    --good-text:    #5dffa8;
+    --bad:          #ff5d6c;
+    --bad-text:     #ff7a86;
+    --buy:          #ffb366;
+    --sell:         #ff8c42;
+    --glow:         #ffb366;
+    --glow-2:       #ff8c42;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { overflow-x: hidden; }
+  html {
+    background: #01040a;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    position: relative;
+    background:
+      radial-gradient(circle at 50% 25%, rgba(255, 140, 66, 0.22) 0%, transparent 55%),
+      radial-gradient(circle at 15% 75%, rgba(255, 90, 30, 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse 130% 80% at 50% 100%, rgba(255, 100, 30, 0.1), transparent 65%),
+      radial-gradient(circle at 50% 40%, #3a1c0a 0%, #1a0c05 45%, #0a0503 75%, #000000 100%);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    isolation: isolate;
+  }
+  body::before,
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  body::before {
+    background-image:
+      radial-gradient(3px 3px at 20% 30%, rgba(255,179,102,1), rgba(255,179,102,0) 70%),
+      radial-gradient(2px 2px at 65% 15%, rgba(255,140,66,0.95), rgba(255,140,66,0) 70%),
+      radial-gradient(4px 4px at 80% 60%, rgba(255,120,40,0.85), rgba(255,120,40,0) 70%),
+      radial-gradient(2px 2px at 40% 80%, rgba(255,179,102,0.9), rgba(255,179,102,0) 70%),
+      radial-gradient(3px 3px at 10% 65%, rgba(255,100,30,0.75), rgba(255,100,30,0) 70%),
+      radial-gradient(2px 2px at 90% 85%, rgba(255,179,102,0.8), rgba(255,179,102,0) 70%),
+      radial-gradient(3px 3px at 55% 45%, rgba(255,140,66,0.7), rgba(255,140,66,0) 70%),
+      radial-gradient(2px 2px at 30% 5%, rgba(255,179,102,0.95), rgba(255,179,102,0) 70%);
+    background-repeat: repeat;
+    background-size: 260px 260px;
+    animation: drift 100s linear infinite;
+    opacity: 0.85;
+  }
+  body::after {
+    background-image:
+      radial-gradient(2px 2px at 15% 50%, rgba(255,200,140,0.8), rgba(255,200,140,0) 70%),
+      radial-gradient(2.5px 2.5px at 75% 35%, rgba(255,120,40,0.8), rgba(255,120,40,0) 70%),
+      radial-gradient(2px 2px at 45% 90%, rgba(255,179,102,0.7), rgba(255,179,102,0) 70%),
+      radial-gradient(3px 3px at 85% 10%, rgba(255,140,66,0.8), rgba(255,140,66,0) 70%);
+    background-repeat: repeat;
+    background-size: 340px 340px;
+    animation: drift 150s linear infinite reverse, flicker 4s ease-in-out infinite;
+  }
+  @keyframes drift {
+    from { transform: translate3d(0, 0, 0); }
+    to   { transform: translate3d(-260px, -260px, 0); }
+  }
+  @keyframes flicker {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.95; }
+  }
+  .page {
+    width: 100%;
+    max-width: 560px;
+    min-width: 0;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card { min-width: 0; }
+  header.pagehead { padding: 4px 4px 0; }
+  h1 {
+    margin: 0 0 2px;
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    background: linear-gradient(135deg, #ffd9a8, #ff8c42);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 30px rgba(255, 179, 102, 0.45);
     width: fit-content;
   }
   p.sub {
@@ -349,18 +700,17 @@ PAGE = """<!doctype html>
     font-size: 0.9rem;
   }
   .card {
-    background: var(--surface);
-    backdrop-filter: blur(20px) saturate(130%);
-    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    background: linear-gradient(135deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.04) 55%, rgba(255,255,255,0.015) 100%);
     border: 1px solid var(--border);
+    border-top-color: var(--border-top);
     border-radius: 16px;
     padding: 18px;
-    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.08);
+    box-shadow: 0 8px 32px 0 rgba(10, 4, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
     transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
   }
   .card:hover {
-    border-color: rgba(0, 217, 255, 0.22);
-    box-shadow: 0 8px 40px 0 rgba(0, 217, 255, 0.15);
+    border-color: rgba(255, 179, 102, 0.3);
+    box-shadow: 0 8px 40px 0 rgba(10, 4, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.28);
   }
   h2 {
     margin: 0 0 12px;
@@ -368,7 +718,7 @@ PAGE = """<!doctype html>
     font-size: 0.95rem;
     font-weight: 700;
     color: var(--ink);
-    text-shadow: 0 0 16px rgba(0, 217, 255, 0.35);
+    text-shadow: 0 0 16px rgba(255, 179, 102, 0.35);
   }
   h2 .count { color: var(--ink-muted); font-weight: 500; text-shadow: none; }
 
@@ -379,19 +729,18 @@ PAGE = """<!doctype html>
     gap: 10px;
   }
   .kpi {
-    background: var(--surface);
-    backdrop-filter: blur(20px) saturate(130%);
-    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.03) 60%, rgba(255,255,255,0.01) 100%);
     border: 1px solid var(--border);
+    border-top-color: var(--border-top);
     border-radius: 14px;
     padding: 12px 10px;
     min-width: 0;
-    box-shadow: 0 8px 24px 0 rgba(0, 217, 255, 0.06);
+    box-shadow: 0 8px 24px 0 rgba(10, 4, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
     transition: box-shadow 0.3s ease, border-color 0.3s ease;
   }
   .kpi:hover {
-    border-color: rgba(0, 217, 255, 0.25);
-    box-shadow: 0 8px 28px 0 rgba(0, 217, 255, 0.15);
+    border-color: rgba(255, 179, 102, 0.32);
+    box-shadow: 0 8px 28px 0 rgba(10, 4, 0, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.26);
   }
   .kpi-label {
     font-size: 0.72rem;
@@ -410,11 +759,11 @@ PAGE = """<!doctype html>
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--ink);
-    text-shadow: 0 0 14px rgba(0, 217, 255, 0.4);
+    text-shadow: 0 0 14px rgba(255, 179, 102, 0.4);
     animation: pulseValue 3.2s ease-in-out infinite;
   }
-  .kpi-value.up { color: var(--good-text); text-shadow: 0 0 14px rgba(0, 255, 176, 0.45); }
-  .kpi-value.down { color: var(--bad-text); text-shadow: 0 0 14px rgba(255, 77, 109, 0.45); }
+  .kpi-value.up { color: var(--good-text); text-shadow: 0 0 14px rgba(93, 255, 168, 0.45); }
+  .kpi-value.down { color: var(--bad-text); text-shadow: 0 0 14px rgba(255, 93, 108, 0.45); }
   @keyframes pulseValue {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.82; }
@@ -450,12 +799,12 @@ PAGE = """<!doctype html>
     transition: width 0.3s ease;
   }
   .posbar-fill.up {
-    background-image: linear-gradient(90deg, #00ffb0, #00d9ff, #00ffb0);
-    box-shadow: 0 0 12px rgba(0, 255, 176, 0.65);
+    background-image: linear-gradient(90deg, #5dffa8, #ffb366, #5dffa8);
+    box-shadow: 0 0 12px rgba(93, 255, 168, 0.65);
   }
   .posbar-fill.down {
-    background-image: linear-gradient(90deg, #ff4d6d, #ff8a4d, #ff4d6d);
-    box-shadow: 0 0 12px rgba(255, 77, 109, 0.65);
+    background-image: linear-gradient(90deg, #ff5d6c, #ff8c42, #ff5d6c);
+    box-shadow: 0 0 12px rgba(255, 93, 108, 0.65);
   }
   @keyframes barflow {
     0% { background-position: 0% 0; }
@@ -481,8 +830,8 @@ PAGE = """<!doctype html>
     flex: none;
     background: var(--ink-muted);
   }
-  .tradedot.buy { background: var(--buy); box-shadow: 0 0 8px rgba(0, 217, 255, 0.8); }
-  .tradedot.sell { background: var(--sell); box-shadow: 0 0 8px rgba(255, 138, 77, 0.8); }
+  .tradedot.buy { background: var(--buy); box-shadow: 0 0 8px rgba(255, 179, 102, 0.8); }
+  .tradedot.sell { background: var(--sell); box-shadow: 0 0 8px rgba(255, 140, 66, 0.8); }
   .tradesym { font-weight: 600; }
   .tradeaction { color: var(--ink-2); }
   .tradetime {
@@ -510,6 +859,16 @@ PAGE = """<!doctype html>
     font-size: 0.88rem;
     padding: 4px 0;
   }
+  .dashed {
+    border: 1.5px dashed rgba(255, 179, 102, 0.35);
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+    color: var(--ink-muted);
+    font-size: 0.88rem;
+    background: transparent;
+  }
+  .dashed:hover { border-color: rgba(255, 179, 102, 0.6); color: var(--ink-2); }
 
   /* Ask card */
   textarea {
@@ -527,8 +886,8 @@ PAGE = """<!doctype html>
   }
   textarea:focus, input:focus {
     outline: none;
-    border-color: rgba(0, 217, 255, 0.5);
-    box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.15);
+    border-color: rgba(255, 179, 102, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 179, 102, 0.15);
   }
   button {
     margin-top: 12px;
@@ -536,15 +895,15 @@ PAGE = """<!doctype html>
     padding: 14px;
     font-size: 16px;
     font-weight: 600;
-    border: 1px solid rgba(0, 217, 255, 0.4);
+    border: 1px solid rgba(255, 179, 102, 0.5);
     border-radius: 10px;
-    background: linear-gradient(135deg, rgba(0, 217, 255, 0.75), rgba(77, 159, 255, 0.75));
-    color: #04121a;
+    background: linear-gradient(135deg, #ffb366, #ff8c42);
+    color: #2a1400;
     cursor: pointer;
     transition: box-shadow 0.3s ease, transform 0.3s ease, filter 0.3s ease;
   }
   button:hover:not(:disabled) {
-    box-shadow: 0 0 20px rgba(0, 217, 255, 0.6);
+    box-shadow: 0 0 20px rgba(255, 179, 102, 0.6);
     filter: brightness(1.08);
   }
   button:active:not(:disabled) { transform: translateY(1px); }
@@ -556,8 +915,8 @@ PAGE = """<!doctype html>
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(4,18,26,0.3);
-    border-top-color: #04121a;
+    border: 2px solid rgba(42,20,0,0.3);
+    border-top-color: #2a1400;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
     margin-right: 6px;
@@ -567,11 +926,10 @@ PAGE = """<!doctype html>
     margin-top: 16px;
     padding: 14px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(20px) saturate(130%);
-    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 100%);
     border: 1px solid var(--border);
-    box-shadow: 0 8px 32px 0 rgba(0, 217, 255, 0.08);
+    border-top-color: var(--border-top);
+    box-shadow: 0 8px 32px 0 rgba(10, 4, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
     white-space: pre-wrap;
     line-height: 1.5;
     font-size: 0.94rem;
@@ -580,166 +938,15 @@ PAGE = """<!doctype html>
   .answer.error { color: var(--bad-text); }
   .hint { margin-top: 10px; font-size: 0.78rem; color: var(--ink-muted); }
 
-  /* Klaus chat card */
-  .chatlog {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-height: 420px;
-    overflow-y: auto;
-    margin-bottom: 12px;
-    min-width: 0;
-  }
-  .bubble {
-    max-width: 85%;
-    padding: 10px 13px;
-    border-radius: 14px;
-    font-size: 0.92rem;
-    line-height: 1.45;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    transition: box-shadow 0.3s ease;
-  }
-  .bubble.user {
-    align-self: flex-end;
-    background: rgba(0, 217, 255, 0.15);
-    border: 1px solid rgba(0, 217, 255, 0.3);
-    color: #eafcff;
-    border-bottom-right-radius: 4px;
-    box-shadow: 0 4px 20px rgba(0, 217, 255, 0.1);
-  }
-  .bubble.assistant {
-    align-self: flex-start;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border);
-    color: var(--ink);
-    border-bottom-left-radius: 4px;
-    box-shadow: 0 4px 20px rgba(77, 159, 255, 0.08);
-  }
-  .bubble.thinking { color: var(--ink-muted); font-style: italic; }
-  .bubble.error { color: var(--bad-text); }
-  .bubble img.attach {
-    max-width: 100%;
-    border-radius: 8px;
-    margin-top: 6px;
-    display: block;
-  }
-  .bubble .fetched-chip {
-    display: block;
-    margin-top: 6px;
-    font-size: 0.75rem;
-    opacity: 0.8;
-  }
-  .chat-composer { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .image-preview-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-  }
-  .image-preview-wrap img {
-    width: 40px;
-    height: 40px;
-    object-fit: cover;
-    border-radius: 6px;
-  }
-  .image-preview-wrap span { font-size: 0.8rem; color: var(--ink-muted); }
-  .image-preview-wrap button {
-    margin-left: auto;
-    width: auto;
-    padding: 4px 8px;
-    background: none;
-    border: none;
-    color: var(--bad-text);
-    font-size: 1rem;
-    cursor: pointer;
-  }
-  .chat-input-row { display: flex; gap: 8px; align-items: flex-end; min-width: 0; }
-  .chat-input-row textarea { flex: 1; min-height: 44px; }
-  .chat-input-row button {
-    width: auto;
-    margin-top: 0;
-    flex: none;
-    cursor: pointer;
-  }
-  .attach-btn {
-    width: 44px !important;
-    height: 44px;
-    border-radius: 10px;
-    border: 1px solid var(--hairline);
-    background: var(--surface);
-    color: var(--ink);
-    font-size: 1.15rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-  }
-  .send-btn { padding: 0 20px; height: 44px; }
-
-  /* Code mode card */
-  .diffbox {
-    max-height: 320px;
-    overflow: auto;
-    background: var(--page-plane);
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    padding: 12px;
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    font-size: 0.78rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin-top: 12px;
-  }
-  .confirm-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-  .confirm-row input {
-    flex: 1;
-    min-width: 100px;
-    padding: 10px;
-    font-size: 16px;
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: var(--surface);
-    color: var(--ink);
-  }
-  .confirm-row button { width: auto; margin-top: 0; padding: 10px 16px; }
-  .codelog { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .codelog-entry {
-    border-top: 1px solid var(--hairline);
-    padding-top: 10px;
-    font-size: 0.85rem;
-  }
-  .codelog-entry:first-child { border-top: none; padding-top: 0; }
-  .codelog-meta {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    color: var(--ink-muted);
-    font-size: 0.78rem;
-    margin-bottom: 4px;
-  }
-  .codelog-status { font-weight: 600; text-transform: capitalize; }
-  .codelog-status.merged { color: var(--good-text); }
-  .codelog-status.error, .codelog-status.rejected { color: var(--bad-text); }
-  .undo-btn {
-    width: auto;
-    margin-top: 6px;
-    padding: 6px 12px;
-    font-size: 0.8rem;
-    font-weight: 600;
-  }
+__NAV_CSS__
 </style>
 </head>
 <body>
+__NAV_HTML__
 <div class="page">
   <header class="pagehead">
-    <h1>Klaus Trading Dashboard</h1>
+    <h1>Trading</h1>
     <p class="sub">Paper account &middot; live overview &amp; assistant</p>
-    <p class="sub" style="margin-top:6px"><a href="/shyfly" style="color:inherit">&#128027; The Shy Fly book series &rarr;</a></p>
   </header>
 
   <div class="kpis" id="kpis">
@@ -766,40 +973,8 @@ PAGE = """<!doctype html>
     <div id="answer" class="answer"></div>
   </div>
 
-  <div class="card">
-    <h2>Chat with Klaus</h2>
-    <div class="chatlog" id="chatlog"></div>
-    <div class="chat-composer">
-      <div class="image-preview-wrap" id="imagePreviewWrap" style="display:none">
-        <img id="imagePreview" alt="attached image">
-        <span>Image attached</span>
-        <button id="removeImageBtn" type="button" title="Remove image">&times;</button>
-      </div>
-      <div class="chat-input-row">
-        <input type="file" id="imageInput" accept="image/*" hidden>
-        <button class="attach-btn" id="attachBtn" type="button" title="Attach a screenshot">&#128247;</button>
-        <textarea id="chatText" placeholder="Message Klaus..."></textarea>
-        <button class="send-btn" id="chatSend" type="button">Send</button>
-      </div>
-      <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; images &amp; links work too</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Code mode</h2>
-    <textarea id="codeInstruction" placeholder="e.g. add a docstring to executor.py explaining the retry logic"></textarea>
-    <button id="codeSubmit">Make the change</button>
-    <div class="hint">Klaus edits on a branch and shows you the diff here first. Merging to main needs a code emailed to you, plus typing "run it".</div>
-    <div id="codeStatus" class="answer"></div>
-    <div id="codeDiffWrap" style="display:none">
-      <pre id="codeDiff" class="diffbox"></pre>
-      <div class="confirm-row">
-        <input id="codeCode" placeholder="4-digit code" inputmode="numeric" maxlength="4">
-        <input id="codePhrase" placeholder='type &quot;run it&quot;'>
-        <button id="codeConfirmBtn">Confirm &amp; merge</button>
-      </div>
-    </div>
-    <div id="codeLog" class="codelog"><div class="loading">Loading&hellip;</div></div>
+  <div class="dashed">
+    <a href="/assistant" style="color:inherit;text-decoration:none">&#128172; Chat with Klaus and Code Mode have moved to their own page &rarr;</a>
   </div>
 </div>
 <script>
@@ -965,6 +1140,195 @@ PAGE = """<!doctype html>
       ask();
     }
   });
+
+</script>
+</body>
+</html>
+"""
+
+PAGE = PAGE.replace("__NAV_CSS__", NAV_CSS).replace("__NAV_HTML__", _nav_html("trading"))
+
+
+ASSISTANT_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Assistant - Klaus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+__BASE_CSS__
+
+  /* Klaus chat card */
+  .chatlog {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    min-width: 0;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 10px 13px;
+    border-radius: 14px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    transition: box-shadow 0.3s ease;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: linear-gradient(135deg, rgba(255, 179, 102, 0.28), rgba(255, 140, 66, 0.14));
+    border: 1px solid rgba(255, 179, 102, 0.35);
+    border-top-color: rgba(255, 220, 180, 0.5);
+    color: #ffffff;
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 4px 20px rgba(10, 4, 0, 0.25), inset 0 1px 0 0 rgba(255,255,255,0.18);
+  }
+  .bubble.assistant {
+    align-self: flex-start;
+    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.03));
+    border: 1px solid var(--border);
+    border-top-color: var(--border-top);
+    color: var(--ink);
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 4px 20px rgba(10, 4, 0, 0.2), inset 0 1px 0 0 rgba(255,255,255,0.15);
+  }
+  .bubble.thinking { color: var(--ink-muted); font-style: italic; }
+  .bubble.error { color: var(--bad-text); }
+  .bubble img.attach { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
+  .bubble .fetched-chip { display: block; margin-top: 6px; font-size: 0.75rem; opacity: 0.8; }
+  .chat-composer { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .image-preview-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+  }
+  .image-preview-wrap img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+  .image-preview-wrap span { font-size: 0.8rem; color: var(--ink-muted); }
+  .image-preview-wrap button {
+    margin-left: auto;
+    width: auto;
+    padding: 4px 8px;
+    background: none;
+    border: none;
+    color: var(--bad-text);
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  .chat-input-row { display: flex; gap: 8px; align-items: flex-end; min-width: 0; }
+  .chat-input-row textarea { flex: 1; min-height: 44px; }
+  .chat-input-row button { width: auto; margin-top: 0; flex: none; cursor: pointer; }
+  .attach-btn {
+    width: 44px !important;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 1.15rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .send-btn { padding: 0 20px; height: 44px; }
+
+  /* Code mode card */
+  .diffbox {
+    max-height: 320px;
+    overflow: auto;
+    background: var(--page-plane);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-top: 12px;
+  }
+  .confirm-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .confirm-row input { flex: 1; min-width: 100px; }
+  .confirm-row button { width: auto; margin-top: 0; padding: 10px 16px; }
+  .codelog { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .codelog-entry { border-top: 1px solid var(--hairline); padding-top: 10px; font-size: 0.85rem; }
+  .codelog-entry:first-child { border-top: none; padding-top: 0; }
+  .codelog-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--ink-muted);
+    font-size: 0.78rem;
+    margin-bottom: 4px;
+  }
+  .codelog-status { font-weight: 600; text-transform: capitalize; }
+  .codelog-status.merged { color: var(--good-text); }
+  .codelog-status.error, .codelog-status.rejected { color: var(--bad-text); }
+  .undo-btn { width: auto; margin-top: 6px; padding: 6px 12px; font-size: 0.8rem; font-weight: 600; }
+__NAV_CSS__
+</style>
+</head>
+<body>
+__NAV_HTML__
+<div class="page">
+  <header class="pagehead">
+    <h1>Assistant</h1>
+    <p class="sub">Chat with Klaus &middot; Code Mode</p>
+  </header>
+
+  <div class="card">
+    <h2>Chat with Klaus</h2>
+    <div class="chatlog" id="chatlog"></div>
+    <div class="chat-composer">
+      <div class="image-preview-wrap" id="imagePreviewWrap" style="display:none">
+        <img id="imagePreview" alt="attached image">
+        <span>Image attached</span>
+        <button id="removeImageBtn" type="button" title="Remove image">&times;</button>
+      </div>
+      <div class="chat-input-row">
+        <input type="file" id="imageInput" accept="image/*" hidden>
+        <button class="attach-btn" id="attachBtn" type="button" title="Attach a screenshot">&#128247;</button>
+        <textarea id="chatText" placeholder="Message Klaus..."></textarea>
+        <button class="send-btn" id="chatSend" type="button">Send</button>
+      </div>
+      <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; images &amp; links work too</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Code mode</h2>
+    <textarea id="codeInstruction" placeholder="e.g. add a docstring to executor.py explaining the retry logic"></textarea>
+    <button id="codeSubmit">Make the change</button>
+    <div class="hint">Klaus edits on a branch and shows you the diff here first. Merging to main needs a code emailed to you, plus typing "run it".</div>
+    <div id="codeStatus" class="answer"></div>
+    <div id="codeDiffWrap" style="display:none">
+      <pre id="codeDiff" class="diffbox"></pre>
+      <div class="confirm-row">
+        <input id="codeCode" placeholder="4-digit code" inputmode="numeric" maxlength="4">
+        <input id="codePhrase" placeholder='type &quot;run it&quot;'>
+        <button id="codeConfirmBtn">Confirm &amp; merge</button>
+      </div>
+    </div>
+    <div id="codeLog" class="codelog"><div class="loading">Loading&hellip;</div></div>
+  </div>
+</div>
+<script>
+  function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
+      d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
 
   // --- Chat with Klaus: general Q&A, image upload, link reading ---
   const chatHistory = [];  // Anthropic-format messages, kept client-side only
@@ -1319,6 +1683,108 @@ PAGE = """<!doctype html>
 </html>
 """
 
+ASSISTANT_PAGE = (
+    ASSISTANT_PAGE
+    .replace("__BASE_CSS__", BASE_CSS)
+    .replace("__NAV_CSS__", NAV_CSS)
+    .replace("__NAV_HTML__", _nav_html("assistant"))
+)
+
+
+HOME_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Klaus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+__BASE_CSS__
+  .home-card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+  }
+  .home-card .home-summary {
+    margin-top: 6px;
+    color: var(--ink-2);
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+__NAV_CSS__
+</style>
+</head>
+<body>
+__NAV_HTML__
+<div class="page">
+  <header class="pagehead">
+    <h1>Klaus</h1>
+    <p class="sub">Pick a section</p>
+  </header>
+
+  <a href="/trading" class="card home-card">
+    <h2>&#128200; Trading</h2>
+    <div class="home-summary">__TRADING_SUMMARY__</div>
+  </a>
+
+  <a href="/shyfly" class="card home-card">
+    <h2>&#128027; Shy Fly Books</h2>
+    <div class="home-summary">__SHYFLY_SUMMARY__</div>
+  </a>
+
+  <a href="/assistant" class="card home-card">
+    <h2>&#128172; Chat &amp; Code Mode</h2>
+    <div class="home-summary">Ask Klaus anything, or have him make a code change - review and confirm before anything ships.</div>
+  </a>
+
+  <a href="/agents/new" class="card home-card">
+    <h2>&#10133; Add Agent</h2>
+    <div class="home-summary">Describe a new research agent and have Klaus draft and build it.</div>
+  </a>
+</div>
+</body>
+</html>
+"""
+
+
+def _home_trading_summary():
+    try:
+        account = data_client.get_account_state()
+        positions = data_client.get_open_positions()
+        portfolio = account.get("portfolio_value")
+        count = len(positions)
+        portfolio_str = f"${portfolio:,.2f}" if isinstance(portfolio, (int, float)) else "&mdash;"
+        return f"{portfolio_str} portfolio &middot; {count} open position{'s' if count != 1 else ''}"
+    except Exception:
+        return "Could not load account summary."
+
+
+def _home_shyfly_summary():
+    try:
+        books = shyfly.list_books()
+    except Exception:
+        return "Could not load book status."
+    if not books:
+        return "No books yet - start Book 1."
+    drafts = sum(1 for b in books if b["status"] == "draft")
+    approved = len(books) - drafts
+    parts = [f"{len(books)} book{'s' if len(books) != 1 else ''}"]
+    if drafts:
+        parts.append(f"{drafts} draft{'s' if drafts != 1 else ''} awaiting review")
+    if approved:
+        parts.append(f"{approved} approved")
+    return " &middot; ".join(parts)
+
+
+HOME_PAGE = (
+    HOME_PAGE
+    .replace("__BASE_CSS__", BASE_CSS)
+    .replace("__NAV_CSS__", NAV_CSS)
+    .replace("__NAV_HTML__", _nav_html("home"))
+)
+
 
 @app.before_request
 def _require_app_password():
@@ -1418,9 +1884,24 @@ def _dashboard_snapshot():
     return {"account": account, "positions": positions, "recent_trades": trades}
 
 
-@app.route("/")
-def index():
+@app.route("/trading")
+def trading_page():
     return render_template_string(PAGE)
+
+
+@app.route("/assistant")
+def assistant_page():
+    return render_template_string(ASSISTANT_PAGE)
+
+
+@app.route("/")
+def home_page():
+    html = (
+        HOME_PAGE
+        .replace("__TRADING_SUMMARY__", _home_trading_summary())
+        .replace("__SHYFLY_SUMMARY__", _home_shyfly_summary())
+    )
+    return render_template_string(html)
 
 
 @app.route("/snapshot")
