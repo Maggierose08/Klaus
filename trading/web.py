@@ -1961,13 +1961,20 @@ SHYFLY_PAGE = """<!doctype html>
       for (const c of chars) {
         const card = document.createElement('div');
         card.className = 'char-card';
-        const img = document.createElement('img');
-        img.src = '/shyfly/image/' + c.reference_image_blob;
-        img.alt = c.name;
+        if (c.reference_image_blob) {
+          const img = document.createElement('img');
+          img.src = '/shyfly/image/' + c.reference_image_blob;
+          img.alt = c.name;
+          card.appendChild(img);
+        } else {
+          const placeholder = document.createElement('div');
+          placeholder.style.cssText = 'width:120px;height:120px;border-radius:12px;border:1px dashed var(--hairline);display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:var(--ink-muted);text-align:center;padding:8px';
+          placeholder.textContent = c.reference_image_error ? 'Portrait failed' : 'No portrait yet';
+          card.appendChild(placeholder);
+        }
         const name = document.createElement('div');
         name.className = 'name';
         name.textContent = c.name;
-        card.appendChild(img);
         card.appendChild(name);
         charListEl.appendChild(card);
       }

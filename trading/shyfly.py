@@ -106,6 +106,11 @@ def _draft_character_bible(theme):
 
 
 def _generate_character_reference_image(name, visual_description):
+    """Returns (blob_path, mime_type, error). error is None on success -
+    on failure (e.g. Gemini image generation isn't available yet because
+    billing isn't enabled on the project), returns (None, None, message)
+    rather than raising, so a missing reference image never blocks the
+    text description from being established."""
     prompt = (
         f"A children's picture book character reference portrait of "
         f"{name}. {visual_description} Simple, warm, flat-illustration "
@@ -114,47 +119,74 @@ def _generate_character_reference_image(name, visual_description):
         "This is a character model sheet - clear, unambiguous depiction "
         "of exactly this one character."
     )
-    data, mime_type = _generate_image_bytes(prompt)
+    try:
+        data, mime_type = _generate_image_bytes(prompt)
+    except Exception as e:
+        return None, None, str(e)
     ext = ".png" if "png" in mime_type else ".jpg"
     blob_path = f"{IMAGE_DIR}/characters/{_slugify(name)}{ext}"
     storage.write_bytes(blob_path, data, content_type=mime_type)
-    return blob_path, mime_type
+    return blob_path, mime_type, None
 
 
 def ensure_character_bible(theme):
-    """Returns the persistent character bible, creating it from `theme` the
-    first time this is ever called (subsequent calls never regenerate or
-    overwrite it, regardless of what `theme` is passed - this is what makes
-    "future books maintain the same look")."""
-    with _lock:
-        existing = _read_characters_raw()
-        if existing:
-            return existing
+    """Returns the persistent character bible, drafting each character's
+    text description from `theme` the first time this is ever called -
+    subsequent calls never re-draft or overwrite an established
+    description, regardless of what `theme` is passed, which is what makes
+    "future books maintain the same look".
 
-    drafted = _draft_character_bible(theme)
-    bible = {}
-    for char in drafted:
-        name = (char.get("name") or "").strip()
-        description = (char.get("visual_description") or "").strip()
-        if not name or not description:
+    Self-healing for reference *images* specifically: if a character's
+    portrait failed earlier (e.g. Gemini image generation wasn't available
+    yet), every call retries just that image - once it succeeds, it's
+    saved and never regenerated again either. The text description is
+    never blocked on the image, so the story/pipeline can proceed with a
+    character that has no locked-in visual reference yet."""
+    with _lock:
+        bible = _read_characters_raw()
+
+    if not bible:
+        drafted = _draft_character_bible(theme)
+        bible = {}
+        for char in drafted:
+            name = (char.get("name") or "").strip()
+            description = (char.get("visual_description") or "").strip()
+            if not name or not description:
+                continue
+            bible[name.lower()] = {
+                "name": name,
+                "visual_description": description,
+                "reference_image_blob": None,
+                "reference_image_mime_type": None,
+                "reference_image_error": None,
+                "created_at": _now_iso(),
+            }
+
+    changed = False
+    for entry in bible.values():
+        if entry.get("reference_image_blob"):
             continue
-        blob_path, mime_type = _generate_character_reference_image(name, description)
-        bible[name.lower()] = {
-            "name": name,
-            "visual_description": description,
-            "reference_image_blob": blob_path,
-            "reference_image_mime_type": mime_type,
-            "created_at": _now_iso(),
-        }
+        blob_path, mime_type, error = _generate_character_reference_image(
+            entry["name"], entry["visual_description"]
+        )
+        entry["reference_image_blob"] = blob_path
+        entry["reference_image_mime_type"] = mime_type
+        entry["reference_image_error"] = error
+        changed = True
 
-    with _lock:
-        # Re-check under the lock in case of a race between two concurrent
-        # first-ever generate calls - first one to finish wins, never
-        # overwrite an already-established bible.
-        existing = _read_characters_raw()
-        if existing:
-            return existing
-        storage.write_text(CHARACTERS_BLOB, json.dumps(bible, indent=2))
+    if changed:
+        with _lock:
+            # Re-check under the lock in case of a race between two
+            # concurrent calls - merge rather than blindly overwrite, since
+            # the other caller may have filled in an image this one didn't.
+            current = _read_characters_raw()
+            for key, entry in bible.items():
+                current_entry = current.get(key)
+                if current_entry and current_entry.get("reference_image_blob"):
+                    continue  # someone else already filled this one in
+                current[key] = entry
+            storage.write_text(CHARACTERS_BLOB, json.dumps(current, indent=2))
+            bible = current
     return bible
 
 
@@ -193,10 +225,16 @@ def _generate_image_bytes(prompt, reference_images=None):
 
 def _reference_images_for_bible(bible):
     """Loads every character's reference image bytes once per book, so all
-    pages generated for that book share the exact same conditioning input."""
+    pages generated for that book share the exact same conditioning input.
+    Characters with no reference image yet (e.g. generated before billing
+    was enabled) are silently skipped - page generation still proceeds
+    text-only for them rather than blocking on it."""
     refs = []
     for entry in bible.values():
-        data = storage.read_bytes(entry["reference_image_blob"])
+        blob_path = entry.get("reference_image_blob")
+        if not blob_path:
+            continue
+        data = storage.read_bytes(blob_path)
         if data is not None:
             refs.append((data, entry["reference_image_mime_type"]))
     return refs
