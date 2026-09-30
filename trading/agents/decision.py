@@ -25,19 +25,30 @@ SYSTEM_PROMPT = (
     f"trade (never more than ${config.MAX_POSITION_NOTIONAL_USD:.0f}). This "
     "decision still has to pass a separate mandatory risk check before "
     "anything executes, so focus on the investment reasoning, not risk limits. "
+    "If the input includes a 'current_position' field, it means the user "
+    "already holds shares of this symbol - use its qty, market_value, and "
+    "unrealized_pl to weigh whether to exit (sell), add to the position "
+    "(buy), or hold. If 'current_position' is absent, the user does not "
+    "currently hold this symbol. "
     'Respond as JSON only: {"action": "buy|sell|hold", "confidence": 0.0-1.0, '
     '"reasoning": "...", "notional_usd": number or null}'
 )
 
 
-def decide(synthesis_result) -> Signal:
+def decide(synthesis_result, position_info=None) -> Signal:
     """Layer 3: formulates a concrete Signal (see strategy.py) from the
-    Layer 2 research summary."""
+    Layer 2 research summary. If position_info is given, it's the caller's
+    existing position (qty/market_value/unrealized_pl) in this symbol, and
+    is included so the agent can reason about whether to exit."""
+    message_payload = dict(synthesis_result)
+    if position_info is not None:
+        message_payload["current_position"] = position_info
+
     response = _get_client().messages.create(
         model="claude-sonnet-4-5",
         max_tokens=400,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": json.dumps(synthesis_result, default=str)}],
+        messages=[{"role": "user", "content": json.dumps(message_payload, default=str)}],
     )
     text = "".join(b.text for b in response.content if b.type == "text")
     try:

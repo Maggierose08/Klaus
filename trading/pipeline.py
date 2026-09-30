@@ -1,4 +1,5 @@
 from . import config
+from . import data_client
 from . import journal
 from . import executor
 from .agents.research_price import research_price
@@ -19,8 +20,18 @@ def run_trading_cycle(symbols=None):
     symbols = symbols or config.WATCHLIST
     entries = []
 
-    for symbol in symbols:
+    try:
+        open_positions = data_client.get_open_positions()
+    except Exception:
+        open_positions = []
+    positions_by_symbol = {p["symbol"]: p for p in open_positions}
+
+    position_only_symbols = [s for s in positions_by_symbol if s not in symbols]
+    all_symbols = list(symbols) + position_only_symbols
+
+    for symbol in all_symbols:
         try:
+            position_info = positions_by_symbol.get(symbol)
             price_data = research_price(symbol)
             fundamentals_data = research_fundamentals(symbol)
             sentiment_data = research_sentiment(symbol) if USE_SENTIMENT_AGENT else None
@@ -29,7 +40,7 @@ def run_trading_cycle(symbols=None):
             synthesis_result = synthesize(
                 symbol, price_data, fundamentals_data, sentiment_data, technical_data
             )
-            signal = decide(synthesis_result)
+            signal = decide(synthesis_result, position_info=position_info)
 
             execution_result = executor.execute_trade(signal)
 
