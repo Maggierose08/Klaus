@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, render_template_string, request
 
+from . import add_agent
 from . import codemode
 from . import config
 from . import data_client
@@ -2274,89 +2275,22 @@ SHYFLY_PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>The Shy Fly</title>
 <style>
-  :root {
-    color-scheme: dark;
-    --surface:      rgba(255, 255, 255, 0.05);
-    --page-plane:   rgba(0, 10, 25, 0.55);
-    --ink:          #eafcff;
-    --ink-2:        #9fd8e8;
-    --ink-muted:    #6d8ea3;
-    --hairline:     rgba(0, 217, 255, 0.16);
-    --border:       rgba(255, 255, 255, 0.12);
-    --good-text:    #3dffc2;
-    --bad-text:     #ff7a90;
-    --buy:          #00d9ff;
-  }
-  * { box-sizing: border-box; }
-  html { background: #01040a; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    background: linear-gradient(180deg, #0a1628 0%, #000000 100%);
-    color: var(--ink);
-    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  }
-  .page {
-    width: 100%;
-    max-width: 640px;
-    min-width: 0;
-    padding: max(20px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  header.pagehead { padding: 4px 4px 0; display: flex; justify-content: space-between; align-items: baseline; }
-  h1 { margin: 0 0 2px; font-size: 1.375rem; font-weight: 700; }
-  a.backlink { color: var(--ink-2); font-size: 0.85rem; text-decoration: none; }
-  p.sub { margin: 0; color: var(--ink-2); font-size: 0.9rem; }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 18px;
-    backdrop-filter: blur(20px);
-  }
-  h2 { margin: 0 0 12px; font-size: 0.95rem; font-weight: 700; }
+__BASE_CSS__
   label { display: block; font-size: 0.82rem; color: var(--ink-2); margin: 10px 0 4px; }
-  input, textarea {
-    width: 100%;
-    padding: 10px 12px;
-    font-size: 16px;
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: rgba(0,0,0,0.3);
-    color: var(--ink);
-    font-family: inherit;
-  }
   textarea { min-height: 100px; resize: vertical; }
-  button {
-    margin-top: 14px;
-    width: 100%;
-    padding: 14px;
-    font-size: 16px;
-    font-weight: 600;
-    border: none;
-    border-radius: 10px;
-    background: var(--buy);
-    color: #001018;
-    cursor: pointer;
-  }
-  button:disabled { opacity: 0.5; cursor: default; }
-  button.secondary { background: rgba(255,255,255,0.1); color: var(--ink); }
   .status { margin-top: 12px; font-size: 0.88rem; color: var(--ink-2); white-space: pre-wrap; }
   .status.error { color: var(--bad-text); }
   .book-list { display: flex; flex-direction: column; gap: 10px; }
   .book-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 12px; border: 1px solid var(--hairline); border-radius: 10px;
-    background: rgba(0,0,0,0.2); cursor: pointer;
+    background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.02));
+    border-top-color: var(--border-top);
+    cursor: pointer;
   }
   .badge { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; font-weight: 600; }
   .badge.draft { background: rgba(255,255,255,0.12); color: var(--ink-2); }
-  .badge.approved { background: rgba(61,255,194,0.15); color: var(--good-text); }
-  .empty { color: var(--ink-muted); font-size: 0.88rem; }
+  .badge.approved { background: rgba(93,255,168,0.15); color: var(--good-text); }
   .char-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
   .char-card { flex: none; width: 120px; text-align: center; }
   .char-card img { width: 120px; height: 120px; object-fit: cover; border-radius: 12px; border: 1px solid var(--hairline); }
@@ -2364,21 +2298,33 @@ SHYFLY_PAGE = """<!doctype html>
   .book-detail-page { border-top: 1px solid var(--hairline); padding-top: 16px; margin-top: 16px; }
   .book-detail-page:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
   .book-detail-page img { width: 100%; border-radius: 12px; border: 1px solid var(--hairline); margin-bottom: 10px; }
-  .book-detail-page .page-num { font-size: 0.72rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .book-detail-page .page-num {
+    font-size: 0.72rem; color: var(--ink-muted); text-transform: uppercase;
+    letter-spacing: 0.04em; display: flex; justify-content: space-between; align-items: center;
+  }
   .book-detail-page .page-text { font-size: 1rem; line-height: 1.5; margin: 4px 0 8px; }
   .book-detail-page .illustration-note { font-size: 0.78rem; color: var(--ink-muted); font-style: italic; }
+  .book-detail-page textarea { margin: 4px 0 8px; }
+  .book-detail-page .edit-illustration { min-height: 60px; font-size: 0.85rem; font-style: italic; }
+  .regen-btn {
+    width: auto; margin-top: 0; padding: 4px 10px; font-size: 0.72rem;
+    font-weight: 600; text-transform: none; letter-spacing: normal;
+  }
   .image-error { color: var(--bad-text); font-size: 0.82rem; padding: 20px; border: 1px dashed var(--bad-text); border-radius: 10px; text-align: center; margin-bottom: 10px; }
   .hidden { display: none; }
+  .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .detail-actions button { flex: 1; min-width: 110px; }
+__NAV_CSS__
 </style>
 </head>
 <body>
+__NAV_HTML__
 <div class="page">
   <header class="pagehead">
     <div>
       <h1>The Shy Fly</h1>
       <p class="sub">Book series drafting &middot; review before publishing</p>
     </div>
-    <a class="backlink" href="/">&larr; Trading dashboard</a>
   </header>
 
   <div class="card" id="charactersCard">
@@ -2405,8 +2351,14 @@ SHYFLY_PAGE = """<!doctype html>
     <h2 id="detailTitle"></h2>
     <div id="detailMeta" class="sub" style="margin-bottom:14px"></div>
     <div id="detailPages"></div>
-    <button id="approveBtn" class="hidden">Approve this book</button>
-    <button id="closeDetailBtn" class="secondary">Back to list</button>
+    <div id="editStatus" class="status hidden"></div>
+    <div class="detail-actions">
+      <button id="editBtn" class="secondary">Edit text</button>
+      <button id="saveEditsBtn" class="hidden">Save changes</button>
+      <button id="cancelEditBtn" class="secondary hidden">Cancel</button>
+      <button id="approveBtn" class="hidden">Approve this book</button>
+      <button id="closeDetailBtn" class="secondary">Back to list</button>
+    </div>
   </div>
 </div>
 <script>
@@ -2423,6 +2375,12 @@ SHYFLY_PAGE = """<!doctype html>
   const detailPagesEl = document.getElementById('detailPages');
   const approveBtnEl = document.getElementById('approveBtn');
   const closeDetailBtnEl = document.getElementById('closeDetailBtn');
+  const editBtnEl = document.getElementById('editBtn');
+  const saveEditsBtnEl = document.getElementById('saveEditsBtn');
+  const cancelEditBtnEl = document.getElementById('cancelEditBtn');
+  const editStatusEl = document.getElementById('editStatus');
+  let currentBook = null;
+  let editing = false;
 
   function fmtTime(iso) {
     if (!iso) return '';
@@ -2503,20 +2461,32 @@ SHYFLY_PAGE = """<!doctype html>
     }
   }
 
-  async function openBook(bookNumber) {
-    const res = await fetch('/shyfly/books/' + bookNumber);
-    const book = await res.json();
-    if (!res.ok) { alert(book.error || 'Could not load that book.'); return; }
+  async function regeneratePageImage(bookNumber, pageNumber, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    try {
+      const res = await fetch('/shyfly/books/' + bookNumber + '/pages/' + pageNumber + '/regenerate-image', { method: 'POST' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.message || 'Could not regenerate.');
+      const fresh = await (await fetch('/shyfly/books/' + bookNumber)).json();
+      currentBook = fresh;
+      renderDetailPages(fresh, editing);
+    } catch (err) {
+      alert(err.message || 'Could not regenerate the image.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Regenerate image';
+    }
+  }
 
-    detailTitleEl.textContent = 'Book ' + book.book_number + ': ' + book.title;
-    detailMetaEl.textContent = book.status + ' · ' + fmtTime(book.created_at);
+  function renderDetailPages(book, editMode) {
     detailPagesEl.innerHTML = '';
     for (const p of book.pages) {
       const div = document.createElement('div');
       div.className = 'book-detail-page';
       if (p.image_blob) {
         const img = document.createElement('img');
-        img.src = '/shyfly/image/' + p.image_blob;
+        img.src = '/shyfly/image/' + p.image_blob + '?v=' + Date.now();
         img.alt = 'Page ' + p.page_number + ' illustration';
         div.appendChild(img);
       } else if (p.image_error) {
@@ -2527,18 +2497,58 @@ SHYFLY_PAGE = """<!doctype html>
       }
       const num = document.createElement('div');
       num.className = 'page-num';
-      num.textContent = 'Page ' + p.page_number;
-      const text = document.createElement('div');
-      text.className = 'page-text';
-      text.textContent = p.text;
-      const note = document.createElement('div');
-      note.className = 'illustration-note';
-      note.textContent = p.illustration_description;
+      const numLabel = document.createElement('span');
+      numLabel.textContent = 'Page ' + p.page_number;
+      num.appendChild(numLabel);
+      if (editMode) {
+        const regenBtn = document.createElement('button');
+        regenBtn.type = 'button';
+        regenBtn.className = 'regen-btn secondary';
+        regenBtn.textContent = 'Regenerate image';
+        regenBtn.addEventListener('click', () => regeneratePageImage(book.book_number, p.page_number, regenBtn));
+        num.appendChild(regenBtn);
+      }
       div.appendChild(num);
-      div.appendChild(text);
-      div.appendChild(note);
+
+      if (editMode) {
+        const textArea = document.createElement('textarea');
+        textArea.className = 'edit-text';
+        textArea.dataset.pageNumber = p.page_number;
+        textArea.value = p.text || '';
+        const illustArea = document.createElement('textarea');
+        illustArea.className = 'edit-illustration';
+        illustArea.dataset.pageNumber = p.page_number;
+        illustArea.value = p.illustration_description || '';
+        div.appendChild(textArea);
+        div.appendChild(illustArea);
+      } else {
+        const text = document.createElement('div');
+        text.className = 'page-text';
+        text.textContent = p.text;
+        const note = document.createElement('div');
+        note.className = 'illustration-note';
+        note.textContent = p.illustration_description;
+        div.appendChild(text);
+        div.appendChild(note);
+      }
       detailPagesEl.appendChild(div);
     }
+  }
+
+  async function openBook(bookNumber) {
+    const res = await fetch('/shyfly/books/' + bookNumber);
+    const book = await res.json();
+    if (!res.ok) { alert(book.error || 'Could not load that book.'); return; }
+
+    currentBook = book;
+    editing = false;
+    editStatusEl.classList.add('hidden');
+    detailTitleEl.textContent = 'Book ' + book.book_number + ': ' + book.title;
+    detailMetaEl.textContent = book.status + ' · ' + fmtTime(book.created_at);
+    renderDetailPages(book, false);
+    editBtnEl.classList.remove('hidden');
+    saveEditsBtnEl.classList.add('hidden');
+    cancelEditBtnEl.classList.add('hidden');
 
     if (book.status === 'draft') {
       approveBtnEl.classList.remove('hidden');
@@ -2559,6 +2569,62 @@ SHYFLY_PAGE = """<!doctype html>
     charListEl.closest('.card').classList.add('hidden');
     detailCardEl.classList.remove('hidden');
   }
+
+  editBtnEl.addEventListener('click', () => {
+    editing = true;
+    renderDetailPages(currentBook, true);
+    editBtnEl.classList.add('hidden');
+    approveBtnEl.classList.add('hidden');
+    saveEditsBtnEl.classList.remove('hidden');
+    cancelEditBtnEl.classList.remove('hidden');
+  });
+
+  cancelEditBtnEl.addEventListener('click', () => {
+    editing = false;
+    renderDetailPages(currentBook, false);
+    editBtnEl.classList.remove('hidden');
+    if (currentBook.status === 'draft') approveBtnEl.classList.remove('hidden');
+    saveEditsBtnEl.classList.add('hidden');
+    cancelEditBtnEl.classList.add('hidden');
+  });
+
+  saveEditsBtnEl.addEventListener('click', async () => {
+    const pages = [];
+    detailPagesEl.querySelectorAll('.edit-text').forEach(el => {
+      pages.push({ page_number: parseInt(el.dataset.pageNumber, 10), text: el.value });
+    });
+    detailPagesEl.querySelectorAll('.edit-illustration').forEach(el => {
+      const entry = pages.find(p => p.page_number === parseInt(el.dataset.pageNumber, 10));
+      if (entry) entry.illustration_description = el.value;
+    });
+    saveEditsBtnEl.disabled = true;
+    editStatusEl.classList.remove('hidden', 'error');
+    editStatusEl.textContent = 'Saving...';
+    try {
+      const res = await fetch('/shyfly/books/' + currentBook.book_number + '/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pages }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.message || 'Could not save.');
+      const fresh = await (await fetch('/shyfly/books/' + currentBook.book_number)).json();
+      currentBook = fresh;
+      editing = false;
+      renderDetailPages(fresh, false);
+      editBtnEl.classList.remove('hidden');
+      if (fresh.status === 'draft') approveBtnEl.classList.remove('hidden');
+      saveEditsBtnEl.classList.add('hidden');
+      cancelEditBtnEl.classList.add('hidden');
+      editStatusEl.textContent = 'Saved.';
+      loadBooks();
+    } catch (err) {
+      editStatusEl.classList.add('error');
+      editStatusEl.textContent = err.message || 'Could not save.';
+    } finally {
+      saveEditsBtnEl.disabled = false;
+    }
+  });
 
   function closeDetail() {
     detailCardEl.classList.add('hidden');
@@ -2604,6 +2670,13 @@ SHYFLY_PAGE = """<!doctype html>
 </body>
 </html>
 """
+
+SHYFLY_PAGE = (
+    SHYFLY_PAGE
+    .replace("__BASE_CSS__", BASE_CSS)
+    .replace("__NAV_CSS__", NAV_CSS)
+    .replace("__NAV_HTML__", _nav_html("shyfly"))
+)
 
 
 # --- The Shy Fly children's book agent ---
@@ -2665,6 +2738,22 @@ def shyfly_approve(book_number):
     return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
 
 
+@app.route("/shyfly/books/<int:book_number>/pages", methods=["POST"])
+def shyfly_update_pages(book_number):
+    body = request.get_json(silent=True) or {}
+    updates = body.get("pages")
+    if not isinstance(updates, list):
+        return jsonify({"error": "Missing pages list."}), 400
+    ok, message = shyfly.update_book_pages(book_number, updates)
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
+
+
+@app.route("/shyfly/books/<int:book_number>/pages/<int:page_number>/regenerate-image", methods=["POST"])
+def shyfly_regenerate_image(book_number, page_number):
+    ok, message = shyfly.regenerate_page_image(book_number, page_number)
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 400)
+
+
 @app.route("/shyfly/image/<path:relative_path>")
 def shyfly_image(relative_path):
     """Serves a generated illustration/character-reference image from GCS.
@@ -2681,6 +2770,249 @@ def shyfly_image(relative_path):
     ext = os.path.splitext(relative_path)[1].lower()
     mime_type = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}[ext.lstrip(".")]
     return Response(data, mimetype=mime_type)
+
+
+# --- Add Agent: structured form -> Klaus drafts a plan + code-mode
+# instruction -> reuses codemode.py's existing request/confirm pipeline
+# unchanged. See trading/add_agent.py for the drafting step. ---
+
+ADD_AGENT_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Add Agent - Klaus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+__BASE_CSS__
+  .plan-box {
+    margin-top: 14px;
+    padding: 14px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(255,179,102,0.14), rgba(255,140,66,0.05));
+    border: 1px solid rgba(255,179,102,0.3);
+    border-top-color: rgba(255,220,180,0.5);
+    line-height: 1.5;
+    font-size: 0.92rem;
+  }
+  .diffbox {
+    max-height: 320px;
+    overflow: auto;
+    background: var(--page-plane);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-top: 12px;
+  }
+  .confirm-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .confirm-row input { flex: 1; min-width: 100px; }
+  .confirm-row button { width: auto; margin-top: 0; padding: 10px 16px; }
+  .hidden { display: none; }
+__NAV_CSS__
+</style>
+</head>
+<body>
+__NAV_HTML__
+<div class="page">
+  <header class="pagehead">
+    <h1>Add Agent</h1>
+    <p class="sub">Describe a new research agent &middot; Klaus plans it, then builds it via Code Mode</p>
+  </header>
+
+  <div class="card">
+    <h2>New agent</h2>
+    <label for="agentName">Name</label>
+    <input type="text" id="agentName" placeholder="e.g. Insider Trading Monitor">
+    <label for="agentPurpose">Purpose</label>
+    <textarea id="agentPurpose" placeholder="What should this agent research or watch for?"></textarea>
+    <label for="agentDetails">Key details</label>
+    <textarea id="agentDetails" placeholder="Data source, specific signals to weight, anything else worth knowing..."></textarea>
+    <button id="proposeBtn">Draft plan</button>
+    <div id="proposeStatus" class="answer"></div>
+    <div id="planWrap" class="hidden">
+      <div class="plan-box" id="planExplanation"></div>
+    </div>
+    <div id="diffWrap" class="hidden">
+      <pre id="diffBox" class="diffbox"></pre>
+      <div class="confirm-row">
+        <input id="confirmCode" placeholder="4-digit code" inputmode="numeric" maxlength="4">
+        <input id="confirmPhrase" placeholder='type &quot;run it&quot;'>
+        <button id="confirmBtn">Confirm &amp; merge</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  const nameEl = document.getElementById('agentName');
+  const purposeEl = document.getElementById('agentPurpose');
+  const detailsEl = document.getElementById('agentDetails');
+  const proposeBtnEl = document.getElementById('proposeBtn');
+  const proposeStatusEl = document.getElementById('proposeStatus');
+  const planWrapEl = document.getElementById('planWrap');
+  const planExplanationEl = document.getElementById('planExplanation');
+  const diffWrapEl = document.getElementById('diffWrap');
+  const diffBoxEl = document.getElementById('diffBox');
+  const confirmCodeEl = document.getElementById('confirmCode');
+  const confirmPhraseEl = document.getElementById('confirmPhrase');
+  const confirmBtnEl = document.getElementById('confirmBtn');
+  let currentRequestId = null;
+  let pollTimer = null;
+
+  function showStatus(text, isError) {
+    proposeStatusEl.style.display = 'block';
+    proposeStatusEl.classList.toggle('error', !!isError);
+    proposeStatusEl.textContent = text;
+  }
+
+  function pollStatus() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      let data, ok;
+      try {
+        const res = await fetch('/codemode/status/' + currentRequestId);
+        data = await res.json();
+        ok = res.ok;
+      } catch (err) {
+        return; // transient - keep polling
+      }
+      if (!ok) {
+        clearInterval(pollTimer);
+        showStatus(data.error || 'That request expired.', true);
+        proposeBtnEl.disabled = false;
+        return;
+      }
+      if (data.status === 'running' || data.status === 'confirming') {
+        showStatus('Building it now - this can take a minute or two...', false);
+      } else if (data.status === 'diff_ready') {
+        clearInterval(pollTimer);
+        proposeBtnEl.disabled = false;
+        showStatus(data.summary || 'Change ready for review. Check your email for the code.', false);
+        diffBoxEl.textContent = data.diff || '(no diff)';
+        diffWrapEl.classList.remove('hidden');
+      } else if (data.status === 'no_changes') {
+        clearInterval(pollTimer);
+        proposeBtnEl.disabled = false;
+        showStatus(data.summary || "Didn't end up changing anything.", false);
+      } else if (data.status === 'error') {
+        clearInterval(pollTimer);
+        proposeBtnEl.disabled = false;
+        showStatus(data.error_message || 'Something went wrong.', true);
+      }
+    }, 3000);
+  }
+
+  proposeBtnEl.addEventListener('click', async () => {
+    const name = nameEl.value.trim();
+    const purpose = purposeEl.value.trim();
+    const details = detailsEl.value.trim();
+    if (!name || !purpose) return;
+
+    proposeBtnEl.disabled = true;
+    planWrapEl.classList.add('hidden');
+    diffWrapEl.classList.add('hidden');
+    showStatus('Drafting a plan...', false);
+
+    try {
+      const res = await fetch('/agents/propose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, purpose, details }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+
+      currentRequestId = data.request_id;
+      planExplanationEl.textContent = data.plan_explanation || data.instruction;
+      planWrapEl.classList.remove('hidden');
+      showStatus('Plan drafted - building it now, this can take a minute or two...', false);
+      pollStatus();
+    } catch (err) {
+      showStatus(err.message || 'Something went wrong.', true);
+      proposeBtnEl.disabled = false;
+    }
+  });
+
+  confirmBtnEl.addEventListener('click', async () => {
+    const code = confirmCodeEl.value.trim();
+    const phrase = confirmPhraseEl.value.trim();
+    if (!code || !phrase) return;
+    confirmBtnEl.disabled = true;
+    try {
+      const res = await fetch('/codemode/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: currentRequestId, code, phrase }),
+      });
+      const data = await res.json();
+      showStatus(data.message || (data.ok ? 'Done.' : 'Something went wrong.'), !data.ok);
+      if (data.ok) {
+        diffWrapEl.classList.add('hidden');
+        planWrapEl.classList.add('hidden');
+        nameEl.value = '';
+        purposeEl.value = '';
+        detailsEl.value = '';
+        confirmCodeEl.value = '';
+        confirmPhraseEl.value = '';
+      }
+    } catch (err) {
+      showStatus(err.message || 'Something went wrong.', true);
+    } finally {
+      confirmBtnEl.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
+"""
+
+ADD_AGENT_PAGE = (
+    ADD_AGENT_PAGE
+    .replace("__BASE_CSS__", BASE_CSS)
+    .replace("__NAV_CSS__", NAV_CSS)
+    .replace("__NAV_HTML__", _nav_html("agents"))
+)
+
+
+@app.route("/agents/new")
+def add_agent_page():
+    return render_template_string(ADD_AGENT_PAGE)
+
+
+@app.route("/agents/propose", methods=["POST"])
+def agents_propose():
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    purpose = (body.get("purpose") or "").strip()
+    details = (body.get("details") or "").strip()
+    if not name or not purpose:
+        return jsonify({"error": "Give it a name and a purpose at least."}), 400
+
+    try:
+        plan_explanation, instruction = add_agent.draft_agent_plan(name, purpose, details)
+    except anthropic.APIError as e:
+        return jsonify({"error": f"Claude request failed: {e}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+    try:
+        request_id, branch = codemode.start_request(instruction)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 409
+    except Exception as e:
+        return jsonify({"error": f"Couldn't start that: {e}"}), 502
+
+    return jsonify({
+        "plan_explanation": plan_explanation,
+        "instruction": instruction,
+        "request_id": request_id,
+        "branch": branch,
+    })
 
 
 if __name__ == "__main__":

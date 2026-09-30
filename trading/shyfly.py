@@ -344,6 +344,67 @@ def approve_book(book_number):
     return True, "Approved."
 
 
+def update_book_pages(book_number, updates):
+    """Direct text edits, bypassing chat/regeneration entirely. `updates` is
+    a list of {"page_number": N, "text": ..., "illustration_description":
+    ...} - only the fields present and non-None per entry are changed;
+    image_blob/image_error are untouched here (see regenerate_page_image).
+    Allowed regardless of draft/approved status - a typo fix after approval
+    is a reasonable thing to want."""
+    book = read_book(book_number)
+    if book is None:
+        return False, "No such book."
+    by_number = {p["page_number"]: p for p in book["pages"]}
+    touched = False
+    for u in updates:
+        page = by_number.get(u.get("page_number"))
+        if page is None:
+            continue
+        if u.get("text") is not None:
+            page["text"] = u["text"]
+            touched = True
+        if u.get("illustration_description") is not None:
+            page["illustration_description"] = u["illustration_description"]
+            touched = True
+    if not touched:
+        return False, "Nothing to save."
+    _write_book(book)
+    return True, "Saved."
+
+
+def regenerate_page_image(book_number, page_number):
+    """Re-generates a single page's illustration from its current
+    (possibly just-edited) illustration_description, using the same
+    character reference images as the original generation. Explicit,
+    opt-in per page - never automatic on a text edit, since it's a real
+    API call."""
+    book = read_book(book_number)
+    if book is None:
+        return False, "No such book."
+    page = next((p for p in book["pages"] if p["page_number"] == page_number), None)
+    if page is None:
+        return False, "No such page."
+    if not page.get("illustration_description"):
+        return False, "No illustration description to generate from."
+
+    bible = get_character_bible()
+    reference_images = _reference_images_for_bible(bible)
+    try:
+        data, mime_type = _generate_image_bytes(page["illustration_description"], reference_images)
+    except Exception as e:
+        page["image_error"] = str(e)
+        _write_book(book)
+        return False, f"Image generation failed: {e}"
+
+    blob_path = f"{IMAGE_DIR}/books/{book_number}/page_{page_number}.png"
+    storage.write_bytes(blob_path, data, content_type=mime_type)
+    page["image_blob"] = blob_path
+    page["image_mime_type"] = mime_type
+    page["image_error"] = None
+    _write_book(book)
+    return True, "Regenerated."
+
+
 # --- orchestration ---
 
 def generate_book(book_number, theme):
