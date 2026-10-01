@@ -39,7 +39,7 @@ GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME")
 # account; tune as you get a feel for how the pipeline behaves.
 MAX_POSITION_NOTIONAL_USD = 1000.0       # max $ in a single symbol per trade
 MAX_DAILY_TRADES = 5                     # max approved trades per calendar day
-MAX_PORTFOLIO_NOTIONAL_USD = 5000.0      # max total $ deployed across positions
+MAX_PORTFOLIO_NOTIONAL_USD = 50000.0     # max total $ deployed across positions
 
 # Code mode (Klaus editing this repo from the trading-web page). The actual
 # Claude Code CLI run happens in a separate Cloud Run Job (trading-codemode),
